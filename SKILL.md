@@ -63,49 +63,59 @@ clawhub:
 
 ## 配置方式
 
-### 方式1：配置文件（推荐）
+技能启动时会**自动查找配置文件**，如果未找到会提示用户输入配置信息。
 
-创建配置文件 `~/.scnet-chat.env`：
+### 配置加载工作流程
+
+```
+启动技能
+    ↓
+尝试读取 ~/.scnet-chat.env
+    ↓ 未找到
+提示用户输入配置信息
+    ↓
+保存到 ~/.scnet-chat.env
+    ↓
+继续执行
+```
+
+### 配置文件格式
+
+创建 `~/.scnet-chat.env` 文件：
 
 ```bash
-# 创建配置文件
 cat > ~/.scnet-chat.env << 'EOF'
-# SCNet Chat 配置文件
-# 存放位置: ~/.scnet-chat.env
-# 权限建议: chmod 600 ~/.scnet-chat.env
-
-# SCNet 访问密钥 (Access Key)
 SCNET_ACCESS_KEY=your_access_key_here
-
-# SCNet 密钥 (Secret Key)
 SCNET_SECRET_KEY=your_secret_key_here
-
-# SCNet 用户名
 SCNET_USER=your_username_here
 EOF
 
-# 设置文件权限（仅所有者可读写）
 chmod 600 ~/.scnet-chat.env
 ```
 
-### 方式2：环境变量
-
-```bash
-export SCNET_ACCESS_KEY="你的AK"
-export SCNET_SECRET_KEY="你的SK"
-export SCNET_USER="你的用户名"
-```
-
-### 配置优先级
-
-1. **环境变量**（如果已设置，优先级最高）
-2. **配置文件** `~/.scnet-chat.env`
+**注意**：
+- 这是唯一的配置存储方式
+- 如果文件不存在，技能会交互式提示用户输入配置并自动保存
+- 配置文件建议使用 `chmod 600` 设置权限，防止他人读取
 
 ### 如何获取凭证
 
 1. 登录SCNet平台: https://www.scnet.cn/ui/console/index.html#/personal/auth-manage
 2. 进入个人中心 → 访问控制
 3. 创建访问密钥，在自动下载的文件【AK_SK_17736*********.xls】中，获取Accesskey (AK) 和 Secretkey (SK)
+
+## 交互示例
+
+查询我的账户余额 | 我欠费了吗 | account balance
+
+昆山有哪些作业 | 我有哪些作业 | 查询实时作业 | 查询历史作业
+帮我提交作业 | 我要跑作业 | 在昆山提交作业 | 在昆山使用脚本文件/xx.xx提交作业
+(看看 | 查询 | 查看 | 停止 | 运行 | 删除 | 取消)作业 + 12345678(8位数字作业号)
+
+创建目录/public/home/kshdtest，然后上传文件/../test.sh，和文件夹/.../source/ 以上传目录为工作目录,test.sh位启动脚本，使用6个节点，每节点8核心cup，运行时长8小时，提交作业。
+
+notebook 开机 | 启动 | 停止 | 关闭 | 释放 | 删除 | 访问 | 查询 | 查看 | 创建 
+... ...
 
 ## 使用方法
 
@@ -255,6 +265,8 @@ container_mgr.list_containers()
 
 ## 自然语言意图解析
 
+技能意图识别规则文档：https://sugon-hpc.feishu.cn/docx/IRUkdq8PDoUT6QxdkOicmiD9nFi
+
 ### 计算中心识别
 
 | 关键词 | 识别为 |
@@ -271,9 +283,12 @@ container_mgr.list_containers()
 
 ### 意图识别
 
-| 意图 | 关键词 |
-|------|--------|
-| 查询账户 | 余额、账户、account、balance、多少钱 |
+| 意图 | 关键词 | 说明 |
+|------|--------|------|
+| 查询账户 | 余额、账户、account、balance、多少钱、欠费、**我的账户、我的余额** | 支持"我的账户余额是多少"等句式 |
+| **查询作业详情** | **8位数字作业号** | 自动识别作业号24254669、job_id 24254669等格式 |
+| 查询实时作业 | 查询作业、查看作业、作业状态、**我有哪些作业、我的作业** | 支持"我的作业有哪些"等句式 |
+| 提交作业 | 提交作业、submit、**投递作业、创建作业、新建作业、作业提交** | 支持"投递作业"等学术用语 |
 | 查询作业 | 查询作业、查看作业、作业状态、作业列表 |
 | 提交作业 | 提交作业、submit、提交任务、运行作业 |
 | 删除作业 | 删除作业、cancel、terminate、停止作业 |
