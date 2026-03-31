@@ -1,0 +1,1459 @@
+#!/usr/bin/env python3
+"""
+SCNet 作业管理工具
+
+支持查询、删除和提交作业，通过命令行参数识别操作意图。
+
+使用方法:
+    # 查询作业
+    python scripts/job.py                          # 查询实时作业列表
+    python scripts/job.py --history                # 查询历史作业列表
+    python scripts/job.py --job-id 123             # 查询实时作业详情
+    python scripts/job.py --history --job-id 123   # 查询历史作业详情
+    python scripts/job.py --days 7                 # 查询最近7天的历史作业
+    python scripts/job.py --status running         # 按状态筛选实时作业
+    
+    # 删除作业
+    python scripts/job.py --delete --job-id 123    # 删除指定作业
+    
+    # 提交作业（需要指定 --cmd 参数）
+    python scripts/job.py --submit --cmd "sleep 100" --queue comp
+    
+    # 高级筛选
+    python scripts/job.py --queue debug --status running
+    python scripts/job.py --job-name "test*"
+    python scripts/job.py --start-time "2024-01-01 00:00:00" --end-time "2024-01-31 23:59:59"
+
+注意：建议使用自然语言入口 scnet.py 进行作业提交，使用更方便：
+    python scnet.py "提交作业 sleep 100 --queue comp"
+    python scnet.py "提交作业帮助"
+"""
+
+import json
+import sys
+import ssl
+import time
+import urllib.request
+import urllib.error
+import urllib.parse
+import base64
+import argparse
+from pathlib import Path
+from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional, Tuple
+
+# 导入配置文件
+from config import (
+    CONFIG_PATH, CACHE_PATH, CACHE_MAX_AGE,
+    JobTimeout, DEFAULT_JOB_NNODE, DEFAULT_JOB_WALL_TIME,
+    DEFAULT_JOB_APPNAME, DEFAULT_SUBMIT_TYPE
+)
+
+# SSL 上下文
+SSL_CONTEXT = ssl.create_default_context()
+
+# 作业状态映射
+JOB_STATUS_MAP = {
+    'statR': '运行',
+    'statQ': '排队',
+    'statH': '保留',
+    'statS': '挂起',
+    'statE': '退出',
+    'statC': '完成',
+    'statW': '等待',
+    'statX': '其他',
+    'running': 'statR',
+    'queue': 'statQ',
+    'queued': 'statQ',
+    'hold': 'statH',
+    'suspend': 'statS',
+    'exit': 'statE',
+    'completed': 'statC',
+    'complete': 'statC',
+    'wait': 'statW',
+    'waiting': 'statW',
+    'other': 'statX'
+}
+
+
+class Colors:
+    """终端颜色代码"""
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    BOLD = '\033[1m'
+    DIM = '\033[2m'
+    UNDERLINE = '\033[4m'
+    END = '\033[0m'
+
+
+def print_header(text: str):
+    """打印标题"""
+    print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
+    print(f"{Colors.BOLD}{Colors.CYAN} {text}{Colors.END}")
+    print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
+
+
+def print_section(title: str):
+    """打印小节标题"""
+    print(f"\n{Colors.BOLD}{Colors.BLUE}▶ {title}{Colors.END}")
+    print(f"{Colors.BLUE}{'─' * 60}{Colors.END}")
+
+
+def print_item(label: str, value: str, indent: int = 0):
+    """打印键值对"""
+    prefix = "  " * indent
+    print(f"{prefix}{Colors.BOLD}{label}:{Colors.END} {value}")
+
+
+def print_success(text: str):
+    """打印成功信息"""
+    print(f"{Colors.GREEN}✓ {text}{Colors.END}")
+
+
+def print_warning(text: str):
+    """打印警告信息"""
+    print(f"{Colors.YELLOW}⚠ {text}{Colors.END}")
+
+
+def print_error(text: str):
+    """打印错误信息"""
+    print(f"{Colors.RED}✗ {text}{Colors.END}")
+
+
+def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
+    """
+    加载缓存文件
+    
+    Args:
+        auto_init: 缓存不存在或过期时是否自动初始化
+    
+    Returns:
+        缓存数据，如果加载失败则返回 None
+    """
+    # 检查缓存文件是否存在
+    if not CACHE_PATH.exists():
+        print_warning(f"缓存文件不存在: {CACHE_PATH}")
+        
+        if auto_init:
+            print(f"{Colors.CYAN}正在自动初始化缓存...{Colors.END}")
+            if _refresh_cache():
+                # 重新加载缓存
+                try:
+                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                except Exception as e:
+                    print_error(f"加载新缓存失败: {e}")
+                    return None
+            else:
+                print_error("自动初始化缓存失败")
+                return None
+        else:
+            print(f"\n请先运行缓存初始化命令:")
+            print(f"  python scripts/cache.py")
+            return None
+    
+    # 加载缓存文件
+    try:
+        with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+            cache = json.load(f)
+    except json.JSONDecodeError as e:
+        print_error(f"缓存文件解析失败: {e}")
+        if auto_init:
+            print(f"{Colors.CYAN}正在自动刷新缓存...{Colors.END}")
+            if _refresh_cache():
+                # 重新加载缓存
+                try:
+                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                except Exception as e2:
+                    print_error(f"加载新缓存失败: {e2}")
+                    return None
+            else:
+                print_error("自动刷新缓存失败")
+                return None
+        return None
+    except Exception as e:
+        print_error(f"读取缓存文件失败: {e}")
+        if auto_init:
+            print(f"{Colors.CYAN}正在自动刷新缓存...{Colors.END}")
+            if _refresh_cache():
+                # 重新加载缓存
+                try:
+                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                except Exception as e2:
+                    print_error(f"加载新缓存失败: {e2}")
+                    return None
+            else:
+                print_error("自动刷新缓存失败")
+                return None
+        return None
+    
+    # 检查缓存是否过期（token 有效期通常为 12 小时）
+    meta = cache.get('_meta', {})
+    updated_at = meta.get('updated_at', 0)
+    current_time = int(time.time())
+    
+    if current_time - updated_at > CACHE_MAX_AGE:
+        print_warning(f"缓存已过期（上次更新: {datetime.fromtimestamp(updated_at).strftime('%Y-%m-%d %H:%M:%S')}）")
+        
+        if auto_init:
+            print(f"{Colors.CYAN}正在自动刷新缓存...{Colors.END}")
+            if _refresh_cache():
+                # 重新加载缓存
+                try:
+                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                except Exception as e:
+                    print_error(f"加载新缓存失败: {e}")
+                    return None
+            else:
+                print_warning("自动刷新缓存失败，尝试使用现有缓存")
+                # 即使刷新失败，也返回现有缓存（可能还能用）
+                return cache
+        else:
+            print(f"\n请手动刷新缓存:")
+            print(f"  python scripts/cache.py")
+            # 返回过期缓存（可能还能用）
+            return cache
+    
+    return cache
+
+
+def _refresh_cache() -> bool:
+    """
+    调用 cache.py 刷新缓存
+    
+    Returns:
+        True 表示刷新成功，False 表示刷新失败
+    """
+    import subprocess
+    import sys
+    
+    try:
+        # 获取 scripts 目录路径
+        scripts_dir = Path(__file__).parent
+        cache_script = scripts_dir / "cache.py"
+        
+        if not cache_script.exists():
+            print_error(f"缓存脚本不存在: {cache_script}")
+            return False
+        
+        # 运行缓存初始化脚本
+        # 超时设置为子查询超时总和: 35秒
+        result = subprocess.run(
+            [sys.executable, str(cache_script)],
+            capture_output=True,
+            text=True,
+            timeout=35
+        )
+        
+        if result.returncode == 0:
+            print_success("缓存刷新成功")
+            return True
+        else:
+            print_error(f"缓存刷新失败: {result.stderr}")
+            return False
+            
+    except subprocess.TimeoutExpired:
+        print_error("缓存刷新超时（超过 2 分钟）")
+        return False
+    except Exception as e:
+        print_error(f"缓存刷新异常: {e}")
+        return False
+
+
+def load_config_username() -> Optional[str]:
+    """从配置文件加载用户名"""
+    if not CONFIG_PATH.exists():
+        print_error(f"配置文件不存在: {CONFIG_PATH}")
+        return None
+    
+    try:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                # 跳过空行和注释
+                if not line or line.startswith('#'):
+                    continue
+                # 解析 KEY=VALUE
+                if '=' in line:
+                    key, value = line.split('=', 1)
+                    if key.strip() == 'SCNET_USER':
+                        return value.strip()
+        print_error("配置文件中未找到 SCNET_USER")
+        return None
+    except Exception as e:
+        print_error(f"读取配置文件失败: {e}")
+        return None
+
+
+def get_default_cluster(cache: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """获取默认计算中心"""
+    clusters = cache.get('clusters', [])
+    for cluster in clusters:
+        if cluster.get('default') is True:
+            return cluster
+    # 如果没有设置默认，返回第一个非 ac 的计算中心
+    for cluster in clusters:
+        if cluster.get('clusterName') != 'ac':
+            return cluster
+    return None
+
+
+def get_compute_user(token: str) -> str:
+    """从 token 解码获取 computeUser"""
+    try:
+        parts = token.split('.')
+        if len(parts) == 3:
+            payload = parts[1]
+            payload += '=' * (4 - len(payload) % 4)
+            decoded = base64.urlsafe_b64decode(payload)
+            token_data = json.loads(decoded)
+            return token_data.get('computeUser', '')
+    except Exception:
+        pass
+    return ''
+
+
+class JobAPI:
+    """作业查询 API 客户端"""
+    
+    def __init__(self, cluster: Dict[str, Any]):
+        self.cluster = cluster
+        self.token = cluster.get('token', '')
+        self.hpc_url = self._get_hpc_url()
+        self.job_manager_id = self._get_job_manager_id()
+        self.compute_user = get_compute_user(self.token)
+        self.cluster_name = cluster.get('clusterName', '')
+    
+    def _get_hpc_url(self) -> str:
+        """获取 HPC 服务 URL"""
+        hpc_urls = self.cluster.get('hpcUrls', [])
+        if hpc_urls and len(hpc_urls) > 0:
+            return hpc_urls[0].get('url', '')
+        return ''
+    
+    def _get_job_manager_id(self) -> str:
+        """获取 JobManager ID"""
+        job_managers = self.cluster.get('JobManagers', [])
+        if job_managers and len(job_managers) > 0:
+            return str(job_managers[0].get('id', ''))
+        return ''
+    
+    # 从配置文件导入超时时间
+    TIMEOUT_QUERY_REALTIME_JOBS = JobTimeout.QUERY_REALTIME_JOBS
+    TIMEOUT_QUERY_REALTIME_JOB_DETAIL = JobTimeout.QUERY_REALTIME_JOB_DETAIL
+    TIMEOUT_QUERY_HISTORY_JOBS = JobTimeout.QUERY_HISTORY_JOBS
+    TIMEOUT_QUERY_HISTORY_JOB_DETAIL = JobTimeout.QUERY_HISTORY_JOB_DETAIL
+    TIMEOUT_DELETE_JOB = JobTimeout.DELETE_JOB
+    TIMEOUT_SUBMIT_JOB = JobTimeout.SUBMIT_JOB
+    TIMEOUT_USER_QUEUES = JobTimeout.USER_QUEUES
+    TIMEOUT_CLUSTER_INFO = JobTimeout.CLUSTER_INFO
+    
+    # 兼容性保留
+    TIMEOUT_QUICK = JobTimeout.QUICK
+    TIMEOUT_NORMAL = JobTimeout.NORMAL
+    TIMEOUT_COMPLEX = JobTimeout.COMPLEX
+    TIMEOUT_SUBMIT_OLD = JobTimeout.SUBMIT_OLD
+    
+    def _make_request(self, url: str, headers: Dict[str, str], data: Optional[bytes] = None, 
+                      method: str = 'GET', params: Optional[Dict[str, Any]] = None,
+                      timeout: int = None) -> Optional[Dict[str, Any]]:
+        """发起 HTTP 请求"""
+        # 默认使用普通查询超时
+        if timeout is None:
+            timeout = self.TIMEOUT_NORMAL
+            
+        try:
+            # 如果有查询参数，添加到 URL
+            if params:
+                query_string = urllib.parse.urlencode(params)
+                url = f"{url}?{query_string}"
+            
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers=headers,
+                method=method
+            )
+            with urllib.request.urlopen(req, context=SSL_CONTEXT, timeout=timeout) as response:
+                response_body = response.read().decode('utf-8')
+                return json.loads(response_body)
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode('utf-8')
+            try:
+                return json.loads(error_body)
+            except:
+                return {"code": e.code, "msg": error_body}
+        except Exception as e:
+            return {"code": -1, "msg": str(e)}
+    
+    def query_realtime_jobs(self, params: Dict[str, Any]) -> Tuple[Optional[List[Dict]], int, str]:
+        """
+        查询实时作业列表
+        GET /hpc/openapi/v2/jobs
+        
+        Returns: (jobs_list, total_count, error_message)
+        """
+        if not self.hpc_url or not self.job_manager_id:
+            return None, 0, "HPC 服务不可用"
+        
+        # 构建查询参数
+        query_params = {
+            'strClusterIDList': self.job_manager_id,
+            'start': params.get('start', 0),
+            'limit': params.get('limit', 20)
+        }
+        
+        # 可选参数
+        if params.get('job_id'):
+            query_params['strJobId'] = params['job_id']
+        if params.get('job_name'):
+            query_params['strJobName'] = params['job_name']
+        if params.get('queue'):
+            query_params['strQueueName'] = params['queue']
+        if params.get('status'):
+            status_code = JOB_STATUS_MAP.get(params['status'].lower(), params['status'])
+            query_params['strJobStat'] = status_code
+        if params.get('owner'):
+            query_params['strJobOwner'] = params['owner']
+        
+        # 构建 URL
+        query_string = urllib.parse.urlencode(query_params)
+        url = f"{self.hpc_url}/hpc/openapi/v2/jobs?{query_string}"
+        
+        headers = {
+            'token': self.token,
+            'Content-Type': 'application/json'
+        }
+        
+        result = self._make_request(url, headers, timeout=self.TIMEOUT_QUERY_REALTIME_JOBS)
+        
+        if result and str(result.get('code')) == '0':
+            data = result.get('data', {})
+            return data.get('list', []), data.get('total', 0), ""
+        else:
+            return None, 0, result.get('msg', '查询失败')
+    
+    def query_realtime_job_detail(self, job_id: str) -> Tuple[Optional[Dict], str]:
+        """
+        查询实时作业详情
+        GET /hpc/openapi/v2/jobs/{jobId}
+        
+        Returns: (job_detail, error_message)
+        """
+        if not self.hpc_url:
+            return None, "HPC 服务不可用"
+        
+        url = f"{self.hpc_url}/hpc/openapi/v2/jobs/{urllib.parse.quote(str(job_id))}"
+        
+        headers = {
+            'token': self.token,
+            'Content-Type': 'application/json'
+        }
+        
+        result = self._make_request(url, headers, timeout=self.TIMEOUT_QUERY_REALTIME_JOB_DETAIL)
+        
+        if result and str(result.get('code')) == '0':
+            return result.get('data'), ""
+        else:
+            return None, result.get('msg', '查询失败')
+    
+    def query_user_queues(self, username: str) -> Tuple[Optional[List[str]], str]:
+        """
+        查询用户可访问队列
+        GET /hpc/openapi/v2/queuenames/users/{username}
+        
+        Returns: (queues_list, error_message)
+        """
+        if not self.hpc_url or not self.job_manager_id:
+            return None, "HPC 服务不可用"
+        
+        url = f"{self.hpc_url}/hpc/openapi/v2/queuenames/users/{urllib.parse.quote(username)}"
+        
+        headers = {
+            'token': self.token,
+            'Content-Type': 'application/json'
+        }
+        
+        params = {'strJobManagerID': self.job_manager_id}
+        
+        result = self._make_request(url, headers, params=params, timeout=self.TIMEOUT_USER_QUEUES)
+        
+        if result and str(result.get('code')) == '0':
+            data = result.get('data', {})
+            queues = data.get('list', []) if isinstance(data, dict) else []
+            return queues, ""
+        else:
+            return None, result.get('msg', '查询失败')
+    
+    def get_cluster_info(self) -> Tuple[Optional[List[Dict]], str]:
+        """
+        查询集群信息
+        GET /hpc/openapi/v2/cluster
+        
+        Returns: (job_managers_list, error_message)
+        """
+        if not self.hpc_url:
+            return None, "HPC 服务不可用"
+        
+        url = f"{self.hpc_url}/hpc/openapi/v2/cluster"
+        
+        headers = {
+            'token': self.token,
+            'Content-Type': 'application/json'
+        }
+        
+        result = self._make_request(url, headers, timeout=self.TIMEOUT_CLUSTER_INFO)
+        
+        if result and str(result.get('code')) == '0':
+            data = result.get('data', [])
+            return data, ""
+        else:
+            return None, result.get('msg', '查询失败')
+    
+    def query_history_jobs(self, params: Dict[str, Any]) -> Tuple[Optional[List[Dict]], int, str]:
+        """
+        查询历史作业列表
+        GET /hpc/openapi/v2/historyjobs
+        
+        Returns: (jobs_list, total_count, error_message)
+        """
+        if not self.hpc_url or not self.job_manager_id:
+            return None, 0, "HPC 服务不可用"
+        
+        # 构建查询参数
+        query_params = {
+            'strClusterNameList': self.job_manager_id,
+            'timeType': 'CUSTOM',
+            'start': params.get('start', 0),
+            'limit': params.get('limit', 20),
+            'isQueryByQueueTime': 'false'
+        }
+        
+        # 时间范围
+        if params.get('start_time') and params.get('end_time'):
+            query_params['startTime'] = params['start_time']
+            query_params['endTime'] = params['end_time']
+        else:
+            # 默认查询最近30天
+            end = datetime.now()
+            start = end - timedelta(days=params.get('days', 30))
+            query_params['startTime'] = start.strftime('%Y-%m-%d %H:%M:%S')
+            query_params['endTime'] = end.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 可选参数
+        if params.get('job_id'):
+            query_params['jobId'] = params['job_id']
+        if params.get('job_name'):
+            query_params['jobName'] = params['job_name']
+        if params.get('queue'):
+            query_params['queue'] = params['queue']
+        if params.get('status'):
+            status_code = JOB_STATUS_MAP.get(params['status'].lower(), params['status'])
+            query_params['jobState'] = status_code
+        if params.get('user'):
+            query_params['strUser'] = params['user']
+        
+        # 构建 URL
+        query_string = urllib.parse.urlencode(query_params)
+        url = f"{self.hpc_url}/hpc/openapi/v2/historyjobs?{query_string}"
+        
+        headers = {
+            'token': self.token,
+            'Content-Type': 'application/json'
+        }
+        
+        result = self._make_request(url, headers, timeout=self.TIMEOUT_QUERY_HISTORY_JOBS)
+        
+        if result and str(result.get('code')) == '0':
+            data = result.get('data', {})
+            return data.get('list', []), data.get('total', 0), ""
+        else:
+            return None, 0, result.get('msg', '查询失败')
+    
+    def query_history_job_detail(self, job_id: str, acct_time: str = None) -> Tuple[Optional[Dict], str]:
+        """
+        查询历史作业详情
+        GET /hpc/openapi/v2/historyjobs/{jobmanagerId}/{jobId}
+        
+        Returns: (job_detail, error_message)
+        """
+        if not self.hpc_url or not self.job_manager_id:
+            return None, "HPC 服务不可用"
+        
+        url = f"{self.hpc_url}/hpc/openapi/v2/historyjobs/{self.job_manager_id}/{urllib.parse.quote(str(job_id))}"
+        
+        # 可选参数 acctTime
+        if acct_time:
+            url += f"?acctTime={urllib.parse.quote(acct_time)}"
+        
+        headers = {
+            'token': self.token,
+            'Content-Type': 'application/json'
+        }
+        
+        result = self._make_request(url, headers, timeout=self.TIMEOUT_QUERY_HISTORY_JOB_DETAIL)
+        
+        if result and str(result.get('code')) == '0':
+            return result.get('data'), ""
+        else:
+            return None, result.get('msg', '查询失败')
+    
+    def delete_job(self, job_id: str, username: str) -> Tuple[bool, str]:
+        """
+        删除作业
+        DELETE /hpc/openapi/v2/jobs
+        
+        Args:
+            job_id: 作业ID
+            username: 用户名（从配置文件读取）
+        
+        Returns: (success, message)
+        """
+        if not self.hpc_url or not self.job_manager_id:
+            return False, "HPC 服务不可用"
+        
+        url = f"{self.hpc_url}/hpc/openapi/v2/jobs"
+        
+        # 构建 strJobInfoMap: 调度器ID,用户名:作业号:
+        str_job_info_map = f"{self.job_manager_id},{username}:{job_id}:"
+        
+        # 构建请求体数据
+        payload = {
+            'jobMethod': '5',
+            'strJobInfoMap': str_job_info_map
+        }
+        
+        # 编码数据为 application/x-www-form-urlencoded 格式
+        data = urllib.parse.urlencode(payload).encode('utf-8')
+        
+        headers = {
+            'token': self.token,
+            'Content-Type': 'application/x-www-form-urlencoded'
+        }
+        
+        result = self._make_request(url, headers, data=data, method='DELETE', timeout=self.TIMEOUT_DELETE_JOB)
+        
+        if result and str(result.get('code')) == '0':
+            return True, result.get('msg', '删除成功')
+        else:
+            return False, result.get('msg', '删除失败')
+    
+    def submit_job(self, job_params: Dict[str, str]) -> Tuple[Optional[str], str]:
+        """
+        提交作业
+        POST /hpc/openapi/v2/apptemplates/BASIC/BASE/job
+        
+        Args:
+            job_params: 作业参数字典，包含 mapAppJobInfo 中的各个字段
+        
+        Returns: (job_id, message)
+        """
+        if not self.hpc_url or not self.job_manager_id:
+            return None, "HPC 服务不可用"
+        
+        url = f"{self.hpc_url}/hpc/openapi/v2/apptemplates/BASIC/BASE/job"
+        
+        # 构建 mapAppJobInfo
+        map_app_job_info = {}
+        
+        # 生成带时间戳的默认作业名称
+        default_job_name = datetime.now().strftime('job-%Y-%m-%d-%H-%M-%S')
+        
+        # 必填参数（有默认值或必须提供）
+        map_app_job_info['GAP_CMD_FILE'] = job_params.get('cmd', 'sleep 60')
+        map_app_job_info['GAP_NNODE'] = job_params.get('nnode', '1')
+        map_app_job_info['GAP_NODE_STRING'] = job_params.get('node_string', '')
+        map_app_job_info['GAP_SUBMIT_TYPE'] = job_params.get('submit_type', 'cmd')
+        map_app_job_info['GAP_JOB_NAME'] = job_params.get('job_name', default_job_name)
+        map_app_job_info['GAP_WORK_DIR'] = job_params.get('work_dir', '')
+        map_app_job_info['GAP_QUEUE'] = job_params.get('queue', '')
+        map_app_job_info['GAP_WALL_TIME'] = job_params.get('wall_time', '24:00:00')
+        map_app_job_info['GAP_APPNAME'] = job_params.get('appname', 'BASE')
+        map_app_job_info['GAP_STD_OUT_FILE'] = job_params.get('std_out', '')
+        map_app_job_info['GAP_STD_ERR_FILE'] = job_params.get('std_err', '')
+        
+        # 可选参数
+        if job_params.get('nproc'):
+            map_app_job_info['GAP_NPROC'] = job_params['nproc']
+        if job_params.get('ppn'):
+            map_app_job_info['GAP_PPN'] = job_params['ppn']
+        if job_params.get('ngpu'):
+            map_app_job_info['GAP_NGPU'] = job_params['ngpu']
+        if job_params.get('ndcu'):
+            map_app_job_info['GAP_NDCU'] = job_params['ndcu']
+        if job_params.get('job_mem'):
+            map_app_job_info['GAP_JOB_MEM'] = job_params['job_mem']
+        if job_params.get('exclusive'):
+            map_app_job_info['GAP_EXCLUSIVE'] = job_params['exclusive']
+        if job_params.get('multi_sub'):
+            map_app_job_info['GAP_MULTI_SUB'] = job_params['multi_sub']
+        
+        # 构建请求体
+        payload = {
+            'strJobManagerID': self.job_manager_id,
+            'mapAppJobInfo': map_app_job_info
+        }
+        
+        data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        
+        headers = {
+            'token': self.token,
+            'Content-Type': 'application/json'
+        }
+        
+        result = self._make_request(url, headers, data=data, method='POST', timeout=self.TIMEOUT_SUBMIT_JOB)
+        
+        if result and str(result.get('code')) == '0':
+            return result.get('data'), result.get('msg', '提交成功')
+        else:
+            return None, result.get('msg', '提交失败')
+
+
+def parse_status(status: str) -> str:
+    """解析作业状态"""
+    return JOB_STATUS_MAP.get(status.lower(), status)
+
+
+def format_job_status(status_code: str) -> str:
+    """格式化作业状态显示"""
+    status_map = {
+        'statR': ('运行', Colors.GREEN),
+        'statQ': ('排队', Colors.YELLOW),
+        'statH': ('保留', Colors.CYAN),
+        'statS': ('挂起', Colors.RED),
+        'statE': ('退出', Colors.RED),
+        'statC': ('完成', Colors.GREEN),
+        'statW': ('等待', Colors.YELLOW),
+        'statX': ('其他', Colors.DIM),
+    }
+    name, color = status_map.get(status_code, (status_code, Colors.END))
+    return f"{color}{name}{Colors.END}"
+
+
+def display_query_params(api: JobAPI, params: Dict[str, Any], is_history: bool = False):
+    """显示查询条件参数"""
+    print_section("🔍 查询条件")
+    
+    print_item("计算中心", api.cluster_name)
+    print_item("JobManager ID", api.job_manager_id)
+    print_item("查询类型", "历史作业" if is_history else "实时作业")
+    
+    if params.get('job_id'):
+        print_item("作业ID", params['job_id'])
+    if params.get('job_name'):
+        print_item("作业名称", params['job_name'])
+    if params.get('queue'):
+        print_item("队列", params['queue'])
+    if params.get('status'):
+        print_item("状态", params['status'])
+    if params.get('days'):
+        print_item("时间范围", f"最近 {params['days']} 天")
+    if params.get('start_time') and params.get('end_time'):
+        print_item("开始时间", params['start_time'])
+        print_item("结束时间", params['end_time'])
+    
+    print()
+
+
+def display_realtime_jobs(jobs: List[Dict], total: int):
+    """显示实时作业列表"""
+    if not jobs:
+        print_warning("未找到实时作业")
+        return
+    
+    print_section(f"📋 实时作业列表 (共 {total} 条)")
+    
+    for i, job in enumerate(jobs, 1):
+        job_id = job.get('jobId', 'N/A')
+        job_name = job.get('jobName', 'N/A')
+        status = job.get('jobStatus', 'N/A')
+        queue = job.get('queue', 'N/A')
+        nodes = job.get('nodeUsed', 'N/A')
+        cpus = job.get('procNumUsed', 0)
+        runtime = job.get('jobRunTime', 'N/A')
+        
+        status_display = format_job_status(status)
+        
+        print(f"\n  {Colors.BOLD}{i}. 作业 {job_id}{Colors.END}")
+        print(f"     名称: {Colors.CYAN}{job_name}{Colors.END}")
+        print(f"     状态: {status_display}")
+        print(f"     队列: {queue}")
+        print(f"     节点: {nodes}")
+        print(f"     CPU: {cpus} 核")
+        print(f"     运行时间: {runtime}")
+
+
+def display_realtime_job_detail(job: Dict):
+    """显示实时作业详情"""
+    print_section("📄 实时作业详情")
+    
+    print_item("作业ID", job.get('jobId', 'N/A'))
+    print_item("作业名称", job.get('jobName', 'N/A'))
+    print_item("状态", format_job_status(job.get('jobStatus', 'N/A')))
+    print_item("队列", job.get('queue', 'N/A'))
+    print_item("用户", job.get('user', 'N/A'))
+    print_item("工作目录", job.get('workDir', 'N/A'))
+    print_item("启动时间", job.get('jobStartTime', 'N/A'))
+    print_item("运行时间", job.get('jobRunTime', 'N/A'))
+    print_item("使用节点", job.get('nodeUsed', 'N/A'))
+    print_item("CPU核数", f"{job.get('procNumUsed', 0)} 核")
+    print_item("标准输出", job.get('outputPath', 'N/A'))
+    print_item("错误输出", job.get('errorPath', 'N/A'))
+    
+    # 调度器信息
+    print(f"\n  {Colors.BOLD}调度器信息:{Colors.END}")
+    print_item("调度器", job.get('jobmanagerName', 'N/A'), indent=1)
+    print_item("类型", job.get('jobmanagerType', 'N/A'), indent=1)
+
+
+def display_history_jobs(jobs: List[Dict], total: int):
+    """显示历史作业列表"""
+    if not jobs:
+        print_warning("未找到历史作业")
+        return
+    
+    print_section(f"📋 历史作业列表 (共 {total} 条)")
+    
+    for i, job in enumerate(jobs, 1):
+        job_id = job.get('jobId', 'N/A')
+        job_name = job.get('jobName', 'N/A')
+        status = job.get('jobState', 'N/A')
+        queue = job.get('queue', 'N/A')
+        start_time = job.get('jobStartTime', 'N/A')
+        end_time = job.get('jobEndTime', 'N/A')
+        walltime = job.get('jobWalltimeUsed', 'N/A')
+        
+        status_display = format_job_status(status)
+        
+        print(f"\n  {Colors.BOLD}{i}. 作业 {job_id}{Colors.END}")
+        print(f"     名称: {Colors.CYAN}{job_name}{Colors.END}")
+        print(f"     状态: {status_display}")
+        print(f"     队列: {queue}")
+        print(f"     开始: {start_time}")
+        print(f"     结束: {end_time}")
+        print(f"     运行时长: {walltime} 秒")
+
+
+def display_history_job_detail(job: Dict):
+    """显示历史作业详情"""
+    print_section("📄 历史作业详情")
+    
+    print_item("作业ID", job.get('jobId', 'N/A'))
+    print_item("作业名称", job.get('jobName', 'N/A'))
+    print_item("状态", format_job_status(job.get('jobState', 'N/A')))
+    print_item("队列", job.get('queue', 'N/A'))
+    print_item("用户", job.get('userName', 'N/A'))
+    print_item("工作目录", job.get('workdir', 'N/A'))
+    print_item("入队时间", job.get('jobQueueTime', 'N/A'))
+    print_item("开始时间", job.get('jobStartTime', 'N/A'))
+    print_item("结束时间", job.get('jobEndTime', 'N/A'))
+    print_item("等待时间", f"{job.get('jobWaitTime', 0)} 秒")
+    print_item("运行时长", f"{job.get('jobWalltimeUsed', 0)} 秒")
+    print_item("退出码", job.get('jobExitStatus', 'N/A'))
+    
+    # 资源使用
+    print(f"\n  {Colors.BOLD}资源使用:{Colors.END}")
+    print_item("CPU核数", f"{job.get('jobProcNum', 0)} 核", indent=1)
+    print_item("节点数", f"{job.get('nodect', 0)} 个", indent=1)
+    print_item("CPU时间", f"{job.get('jobCpuTime', 0)} 秒", indent=1)
+    print_item("内存使用", f"{job.get('jobMemUsed', 0)} KB", indent=1)
+    
+    # 计费信息
+    if job.get('cpuNuclearHour'):
+        print(f"\n  {Colors.BOLD}计费信息:{Colors.END}")
+        print_item("CPU核时", f"{job.get('cpuNuclearHour', 0)} 小时", indent=1)
+        print_item("GPU卡时", f"{job.get('gpuCardHour', 0)} 小时", indent=1)
+
+
+def display_user_queues(queues: List[str]):
+    """显示用户可访问队列"""
+    if not queues:
+        print_warning("未找到可访问队列")
+        return
+    
+    print_section(f"📋 用户可访问队列 (共 {len(queues)} 个)")
+    
+    for i, queue in enumerate(queues, 1):
+        queue_name = queue if isinstance(queue, str) else queue.get('queueName', str(queue))
+        print(f"  {Colors.BOLD}{i}.{Colors.END} {Colors.CYAN}{queue_name}{Colors.END}")
+
+
+def display_cluster_info(job_managers: List[Dict]):
+    """显示集群信息"""
+    if not job_managers:
+        print_warning("未找到集群信息")
+        return
+    
+    print_section(f"📋 集群信息 (共 {len(job_managers)} 个调度器)")
+    
+    for i, jm in enumerate(job_managers, 1):
+        jm_id = jm.get('id', 'N/A')
+        jm_name = jm.get('text', 'N/A')
+        jm_type = jm.get('jobmanagerType', 'N/A')
+        
+        print(f"\n  {Colors.BOLD}{i}. 调度器 {jm_name}{Colors.END}")
+        print(f"     ID: {jm_id}")
+        print(f"     类型: {jm_type}")
+        
+        # 显示队列信息（如果有）
+        queues = jm.get('queues', [])
+        if queues:
+            print(f"     队列: {', '.join([q.get('queueName', str(q)) for q in queues[:5]])}")
+            if len(queues) > 5:
+                print(f"           ... 等共 {len(queues)} 个队列")
+
+
+def display_delete_result(success: bool, job_id: str, message: str):
+    """显示删除结果"""
+    if success:
+        print_success(f"作业 {job_id} 删除成功")
+        print(f"\n{Colors.GREEN}响应信息: {message}{Colors.END}")
+    else:
+        print_error(f"作业 {job_id} 删除失败")
+        print(f"\n{Colors.RED}错误信息: {message}{Colors.END}")
+
+
+def get_default_job_name() -> str:
+    """生成带时间戳的默认作业名称"""
+    return datetime.now().strftime('job-%Y-%m-%d-%H-%M-%S')
+
+
+# 作业参数定义（按重要程度排序）
+JOB_PARAM_DEFINITIONS = [
+    # (参数名, 环境变量名, 描述, 是否必填, 默认值)
+    ('cmd', 'GAP_CMD_FILE', '命令行内容', True, None),
+    ('job_name', 'GAP_JOB_NAME', '作业名称', True, None),  # 默认值为动态生成: job-{Y-m-d-H-i-s}
+    ('queue', 'GAP_QUEUE', '队列名称', True, None),
+    ('work_dir', 'GAP_WORK_DIR', '工作目录', True, None),
+    ('wall_time', 'GAP_WALL_TIME', '最大运行时长 (HH:MM:SS)', True, '24:00:00'),
+    ('nnode', 'GAP_NNODE', '节点个数', False, '1'),
+    ('submit_type', 'GAP_SUBMIT_TYPE', '提交类型 (cmd/...)', False, 'cmd'),
+    ('appname', 'GAP_APPNAME', '应用名称', False, 'BASE'),
+    ('nproc', 'GAP_NPROC', '总核心数 (与ppn二选一)', False, ''),
+    ('ppn', 'GAP_PPN', 'CPU核心/节点 (与nproc二选一)', False, ''),
+    ('ngpu', 'GAP_NGPU', 'GPU卡数/节点', False, ''),
+    ('ndcu', 'GAP_NDCU', 'DCU卡数/节点', False, ''),
+    ('job_mem', 'GAP_JOB_MEM', '每个节点内存值 (MB/GB)', False, ''),
+    ('exclusive', 'GAP_EXCLUSIVE', '是否独占节点 (1=独占)', False, ''),
+    ('node_string', 'GAP_NODE_STRING', '指定节点 (指定时nnode必须为"")', False, ''),
+    ('std_out', 'GAP_STD_OUT_FILE', '标准输出文件路径', False, ''),
+    ('std_err', 'GAP_STD_ERR_FILE', '标准错误文件路径', False, ''),
+]
+
+
+def get_param_priority_index(param_name: str) -> int:
+    """获取参数的重要程度排序索引"""
+    for i, (name, _, _, _, _) in enumerate(JOB_PARAM_DEFINITIONS):
+        if name == param_name:
+            return i
+    return 999
+
+
+def collect_job_params_interactive(args) -> Dict[str, str]:
+    """
+    交互式收集作业参数
+    按重要程度排序展示，允许用户修改
+    """
+    params = {}
+    
+    print_section("📋 作业参数配置")
+    print(f"{Colors.DIM}请按重要程度顺序确认或修改作业参数，直接回车表示使用默认值{Colors.END}\n")
+    
+    # 从命令行参数预填充
+    param_values = {
+        'cmd': args.cmd,
+        'job_name': args.job_name,
+        'queue': args.queue,
+        'work_dir': args.work_dir,
+        'wall_time': args.wall_time,
+        'nnode': args.nnode,
+        'submit_type': args.submit_type,
+        'appname': args.appname,
+        'nproc': args.nproc,
+        'ppn': args.ppn,
+        'ngpu': args.ngpu,
+        'ndcu': args.ndcu,
+        'job_mem': args.job_mem,
+        'exclusive': args.exclusive,
+        'node_string': args.node_string,
+        'std_out': args.std_out,
+        'std_err': args.std_err,
+    }
+    
+    # 生成动态的默认作业名称
+    dynamic_job_name = get_default_job_name()
+    
+    for param_name, env_name, description, is_required, default in JOB_PARAM_DEFINITIONS:
+        current_value = param_values.get(param_name) or ''
+        
+        # 对 job_name 使用动态生成的默认值
+        if param_name == 'job_name' and not current_value:
+            default = dynamic_job_name
+        
+        # 确定提示值
+        if current_value:
+            prompt_value = current_value
+        elif default:
+            prompt_value = default
+        else:
+            prompt_value = ''
+        
+        # 构建提示字符串
+        required_mark = f"{Colors.RED}* {Colors.END}" if is_required else "  "
+        default_hint = f" {Colors.DIM}(默认: {default}){Colors.END}" if default and not current_value else ""
+        
+        try:
+            print(f"{required_mark}{Colors.BOLD}{description}:{Colors.END}{default_hint}")
+            user_input = input(f"  当前值 [{Colors.CYAN}{prompt_value}{Colors.END}]: ").strip()
+            
+            # 如果用户输入了值，使用用户输入；否则使用当前值或默认值
+            if user_input:
+                params[param_name] = user_input
+            elif current_value:
+                params[param_name] = current_value
+            elif default:
+                params[param_name] = default
+            elif is_required:
+                # 必填参数但没有值
+                print_error(f"{description} 是必填参数，必须提供值")
+                return {}
+            
+        except (KeyboardInterrupt, EOFError):
+            print("\n")
+            print_warning("已取消参数输入")
+            return {}
+    
+    # 自动设置标准输出和错误文件路径（如果未指定）
+    if params.get('work_dir') and not params.get('std_out'):
+        params['std_out'] = f"{params['work_dir']}/std.out.%j"
+    if params.get('work_dir') and not params.get('std_err'):
+        params['std_err'] = f"{params['work_dir']}/std.err.%j"
+    
+    return params
+
+
+def display_job_params(params: Dict[str, str]):
+    """按重要程度排序显示作业参数"""
+    print_section("📋 作业参数确认")
+    
+    # 按重要程度排序
+    sorted_params = sorted(params.items(), key=lambda x: get_param_priority_index(x[0]))
+    
+    for param_name, value in sorted_params:
+        # 查找参数定义
+        desc = param_name
+        for name, _, d, is_required, _ in JOB_PARAM_DEFINITIONS:
+            if name == param_name:
+                desc = d
+                if is_required:
+                    desc = f"{desc} {Colors.RED}*{Colors.END}"
+                break
+        
+        # 截断过长的值
+        display_value = value if len(value) < 50 else value[:47] + "..."
+        print_item(desc, display_value)
+
+
+def confirm_submit() -> bool:
+    """询问用户确认提交作业"""
+    print()
+    print_warning("请确认以上作业参数是否正确")
+    
+    try:
+        response = input(f"{Colors.BOLD}请输入 'yes' 确认提交，或输入参数名修改，或其他键取消: {Colors.END}").strip().lower()
+        if response == 'yes':
+            return True
+        elif response:
+            # 返回参数名表示需要修改
+            return response
+        return False
+    except (KeyboardInterrupt, EOFError):
+        print("\n")
+        return False
+
+
+def edit_param(params: Dict[str, str], param_name: str) -> Dict[str, str]:
+    """编辑指定参数"""
+    # 查找参数定义
+    desc = param_name
+    for name, _, d, _, _ in JOB_PARAM_DEFINITIONS:
+        if name == param_name:
+            desc = d
+            break
+    
+    current_value = params.get(param_name, '')
+    print(f"\n{Colors.BOLD}修改 {desc}:{Colors.END}")
+    print(f"  当前值: {Colors.CYAN}{current_value}{Colors.END}")
+    
+    try:
+        new_value = input(f"  新值: ").strip()
+        if new_value:
+            params[param_name] = new_value
+            print_success(f"已更新 {desc}")
+        else:
+            print_warning("未输入新值，保持原值")
+    except (KeyboardInterrupt, EOFError):
+        print("\n")
+    
+    return params
+
+
+def interactive_submit_job(api: JobAPI) -> Tuple[Optional[str], str]:
+    """
+    交互式提交作业
+    按重要程度排序展示参数，允许用户修改后确认提交
+    """
+    # 第一次收集参数
+    params = collect_job_params_interactive(type('Args', (), {p[0]: '' for p in JOB_PARAM_DEFINITIONS})())
+    if not params:
+        return None, "参数收集失败"
+    
+    while True:
+        # 显示当前参数
+        display_job_params(params)
+        
+        # 确认提交
+        confirm = confirm_submit()
+        
+        if confirm is True:
+            # 确认提交
+            break
+        elif confirm is False:
+            # 取消
+            return None, "用户取消提交"
+        elif isinstance(confirm, str) and confirm in [p[0] for p in JOB_PARAM_DEFINITIONS]:
+            # 修改指定参数
+            params = edit_param(params, confirm)
+        else:
+            print_warning("无效的输入，请重新确认")
+    
+    # 执行提交
+    print(f"\n{Colors.CYAN}正在提交作业...{Colors.END}")
+    return api.submit_job(params)
+
+
+def display_submit_result(job_id: Optional[str], message: str):
+    """显示提交结果"""
+    if job_id:
+        print_success(f"作业提交成功！作业ID: {Colors.BOLD}{job_id}{Colors.END}")
+        print(f"\n{Colors.GREEN}响应信息: {message}{Colors.END}")
+    else:
+        print_error("作业提交失败")
+        print(f"\n{Colors.RED}错误信息: {message}{Colors.END}")
+        
+        # 提供常见错误解决方案
+        if "Access/permission denied" in message or "access restricted" in message:
+            print(f"\n{Colors.YELLOW}可能原因:{Colors.END}")
+            print(f"  1. 您的账户在当前计算中心没有作业提交权限")
+            print(f"  2. 请联系计算中心管理员开通权限")
+            print(f"  3. 或尝试切换到其他您有权限的计算中心")
+        elif "Required partition not available" in message:
+            print(f"\n{Colors.YELLOW}可能原因:{Colors.END}")
+            print(f"  1. 指定的队列当前不可用（维护或已满）")
+            print(f"  2. 请尝试其他队列")
+            print(f"  3. 使用 --queues 查看可用队列")
+        elif "Invalid account" in message:
+            print(f"\n{Colors.YELLOW}可能原因:{Colors.END}")
+            print(f"  1. 账户/队列组合无效")
+            print(f"  2. 您的账户可能没有该队列的使用权限")
+            print(f"  3. 请联系管理员确认账户权限")
+
+
+def main():
+    """主函数"""
+    parser = argparse.ArgumentParser(
+        description='SCNet 作业管理工具 - 查询、删除和提交作业',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+查询示例:
+  python scripts/job.py                          # 查询实时作业列表
+  python scripts/job.py --history                # 查询历史作业列表
+  python scripts/job.py --job-id 123             # 查询实时作业详情
+  python scripts/job.py --history --job-id 123   # 查询历史作业详情
+  python scripts/job.py --days 7                 # 查询最近7天历史作业
+  python scripts/job.py --status running         # 查询运行中的作业
+  python scripts/job.py --queue debug            # 查询指定队列的作业
+  python scripts/job.py --job-name "test*"       # 按作业名称筛选
+  python scripts/job.py --delete --job-id 123    # 删除指定作业
+
+提交作业示例:
+  python scripts/job.py --submit                 # 交互式提交作业
+  python scripts/job.py --submit --cmd "sleep 100" --queue debug  # 带参数提交
+
+队列和集群信息:
+  python scripts/job.py --queues                 # 查询用户可访问队列
+  python scripts/job.py --cluster-info           # 查询集群信息
+        """
+    )
+    
+    # 查询类型
+    parser.add_argument('--history', action='store_true', help='查询历史作业（默认查询实时作业）')
+    
+    # 删除操作
+    parser.add_argument('--delete', action='store_true', help='删除作业（需要配合 --job-id 使用）')
+    
+    # 提交作业
+    parser.add_argument('--submit', action='store_true', help='提交新作业（需要配合 --cmd 参数使用）')
+    
+    # 队列和集群信息
+    parser.add_argument('--queues', action='store_true', help='查询用户可访问队列')
+    parser.add_argument('--cluster-info', action='store_true', help='查询集群信息')
+    
+    # 作业ID（用于详情查询或删除）
+    parser.add_argument('--job-id', type=str, help='作业ID，指定则查询详情或删除作业')
+    
+    # 筛选条件
+    parser.add_argument('--job-name', type=str, help='作业名称（支持模糊匹配）')
+    parser.add_argument('--queue', type=str, help='队列名称')
+    parser.add_argument('--status', type=str, choices=['running', 'queue', 'queued', 'hold', 'suspend', 'exit', 'completed', 'wait', 'waiting', 'other'],
+                       help='作业状态：running(运行), queue/queued(排队), hold(保留), suspend(挂起), exit(退出), completed(完成), wait/waiting(等待), other(其他)')
+    parser.add_argument('--owner', type=str, help='作业所有者用户名（实时作业）')
+    parser.add_argument('--user', type=str, help='用户名（历史作业）')
+    
+    # 时间范围（历史作业）
+    parser.add_argument('--days', type=int, default=30, help='查询最近N天的历史作业（默认30天）')
+    parser.add_argument('--start-time', type=str, help='开始时间，格式：YYYY-MM-DD HH:MM:SS')
+    parser.add_argument('--end-time', type=str, help='结束时间，格式：YYYY-MM-DD HH:MM:SS')
+    
+    # 分页
+    parser.add_argument('--start', type=int, default=0, help='起始位置（分页）')
+    parser.add_argument('--limit', type=int, default=20, help='每页条数（默认20）')
+    
+    # 提交作业参数
+    
+    # 提交作业参数
+    parser.add_argument('--cmd', type=str, help='命令行内容（GAP_CMD_FILE）')
+    parser.add_argument('--nnode', type=str, help='节点个数（GAP_NNODE，默认1）')
+    parser.add_argument('--node-string', type=str, help='指定节点（GAP_NODE_STRING）')
+    parser.add_argument('--submit-type', type=str, help='提交类型（GAP_SUBMIT_TYPE，默认cmd）')
+    parser.add_argument('--work-dir', type=str, help='工作目录（GAP_WORK_DIR）')
+    parser.add_argument('--wall-time', type=str, help='最大运行时长 HH:MM:SS（GAP_WALL_TIME，默认24:00:00）')
+    parser.add_argument('--appname', type=str, help='应用名称（GAP_APPNAME，默认BASE）')
+    parser.add_argument('--nproc', type=str, help='总核心数（GAP_NPROC）')
+    parser.add_argument('--ppn', type=str, help='CPU核心/节点（GAP_PPN）')
+    parser.add_argument('--ngpu', type=str, help='GPU卡数/节点（GAP_NGPU）')
+    parser.add_argument('--ndcu', type=str, help='DCU卡数/节点（GAP_NDCU）')
+    parser.add_argument('--job-mem', type=str, help='每个节点内存值 MB/GB（GAP_JOB_MEM）')
+    parser.add_argument('--exclusive', type=str, help='是否独占节点 1=独占（GAP_EXCLUSIVE）')
+    parser.add_argument('--std-out', type=str, help='标准输出文件路径（GAP_STD_OUT_FILE）')
+    parser.add_argument('--std-err', type=str, help='标准错误文件路径（GAP_STD_ERR_FILE）')
+    
+    args = parser.parse_args()
+    
+    # 加载缓存
+    cache = load_cache(auto_init=False)
+    if not cache:
+        sys.exit(1)
+    
+    # 获取默认计算中心
+    cluster = get_default_cluster(cache)
+    if not cluster:
+        print_error("未找到默认计算中心")
+        sys.exit(1)
+    
+    # 创建 API 客户端
+    api = JobAPI(cluster)
+    
+    if not api.hpc_url:
+        print_error("当前计算中心未配置 HPC 服务")
+        sys.exit(1)
+    
+    # 处理查询用户队列
+    if args.queues:
+        print_header(f"用户可访问队列 - {cluster.get('clusterName', 'N/A')}")
+        
+        if not api.job_manager_id:
+            print_error("未找到 JobManager ID")
+            sys.exit(1)
+        
+        queues, error = api.query_user_queues(api.compute_user or "")
+        if error:
+            print_error(f"查询失败: {error}")
+            sys.exit(1)
+        
+        display_user_queues(queues)
+        
+        # 底部提示
+        print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
+        print(f"  提示: 使用 {Colors.YELLOW}python scripts/job.py --submit{Colors.END} 提交作业时选择队列")
+        print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
+        return
+    
+    # 处理查询集群信息
+    if args.cluster_info:
+        print_header(f"集群信息 - {cluster.get('clusterName', 'N/A')}")
+        
+        job_managers, error = api.get_cluster_info()
+        if error:
+            print_error(f"查询失败: {error}")
+            sys.exit(1)
+        
+        display_cluster_info(job_managers)
+        
+        # 底部提示
+        print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
+        print(f"  提示: 当前默认 JobManager ID: {api.job_manager_id}")
+        print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
+        return
+    
+    if not api.job_manager_id:
+        print_error("当前计算中心未配置 JobManager")
+        sys.exit(1)
+    
+    # 构建查询参数
+    params = {
+        'start': args.start,
+        'limit': args.limit,
+        'job_id': args.job_id,
+        'job_name': args.job_name,
+        'queue': args.queue,
+        'status': args.status,
+        'owner': args.owner or api.compute_user,
+        'user': args.user or api.compute_user,
+        'days': args.days,
+        'start_time': args.start_time,
+        'end_time': args.end_time
+    }
+    
+    # 处理提交作业
+    if args.submit:
+        print_header(f"提交作业 - {cluster.get('clusterName', 'N/A')}")
+        
+        # 检查是否提供了 --cmd 参数
+        if not args.cmd:
+            print_error("提交作业需要指定 --cmd 参数")
+            print(f"\n{Colors.YELLOW}用法示例:{Colors.END}")
+            print(f'  python scripts/job.py --submit --cmd "sleep 100" --queue comp')
+            print(f"\n{Colors.CYAN}使用自然语言入口更方便:{Colors.END}")
+            print(f'  python scnet.py "提交作业 sleep 100 --queue comp"')
+            print(f'  python scnet.py "提交作业帮助"')
+            sys.exit(1)
+        
+        # 设置默认工作目录（用户家目录）
+        default_work_dir = f"/public/home/{api.compute_user}" if api.compute_user else ""
+        
+        job_params = {
+            'cmd': args.cmd,
+            'queue': args.queue or '',
+            'nnode': args.nnode or '1',
+            'node_string': args.node_string or '',
+            'submit_type': args.submit_type or 'cmd',
+            'job_name': args.job_name or datetime.now().strftime('job-%Y-%m-%d-%H-%M-%S'),
+            'work_dir': args.work_dir or default_work_dir,
+            'wall_time': args.wall_time or '24:00:00',
+            'appname': args.appname or 'BASE',
+            'nproc': args.nproc or '',
+            'ppn': args.ppn or '',
+            'ngpu': args.ngpu or '',
+            'ndcu': args.ndcu or '',
+            'job_mem': args.job_mem or '',
+            'exclusive': args.exclusive or '',
+            'std_out': args.std_out or '',
+            'std_err': args.std_err or ''
+        }
+        print(f"{Colors.CYAN}正在提交作业...{Colors.END}")
+        job_id, message = api.submit_job(job_params)
+        display_submit_result(job_id, message)
+        
+        if not job_id:
+            sys.exit(1)
+        
+        # 底部提示
+        print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
+        print(f"  提示: 使用 {Colors.YELLOW}python scripts/job.py --job-id {job_id}{Colors.END} 查看作业详情")
+        print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
+        return
+    
+    # 打印标题
+    cluster_name = cluster.get('clusterName', 'N/A')
+    print_header(f"作业查询 - {cluster_name}")
+    
+    # 显示查询条件
+    display_query_params(api, params, is_history=args.history)
+    
+    # 处理删除作业
+    if args.delete:
+        if not args.job_id:
+            print_error("删除作业需要指定 --job-id 参数")
+            sys.exit(1)
+        
+        # 从配置文件读取用户名
+        config_username = load_config_username()
+        if not config_username:
+            sys.exit(1)
+        
+        # 先查询作业详情
+        job, error = api.query_realtime_job_detail(args.job_id)
+        if error or not job:
+            print_warning(f"未找到作业 {args.job_id}，无法删除")
+            sys.exit(1)
+        
+        # 执行删除
+        print(f"{Colors.CYAN}正在删除作业 {args.job_id}...{Colors.END}")
+        success, message = api.delete_job(args.job_id, config_username)
+        display_delete_result(success, args.job_id, message)
+        
+        if not success:
+            sys.exit(1)
+        
+        # 底部提示
+        print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
+        print(f"  提示: 使用 {Colors.YELLOW}python scripts/cache.py --switch \"中心名称\"{Colors.END} 切换计算中心")
+        print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
+        return
+    
+    # 根据参数决定查询类型
+    if args.history:
+        # 历史作业查询
+        if args.job_id:
+            # 历史作业详情
+            job, error = api.query_history_job_detail(args.job_id)
+            if error:
+                print_error(f"查询失败: {error}")
+                sys.exit(1)
+            if job:
+                display_history_job_detail(job)
+            else:
+                print_warning("未找到该历史作业")
+        else:
+            # 历史作业列表
+            jobs, total, error = api.query_history_jobs(params)
+            if error:
+                print_error(f"查询失败: {error}")
+                sys.exit(1)
+            display_history_jobs(jobs, total)
+    else:
+        # 实时作业查询
+        if args.job_id:
+            # 实时作业详情
+            job, error = api.query_realtime_job_detail(args.job_id)
+            if error:
+                print_error(f"查询失败: {error}")
+                sys.exit(1)
+            if job:
+                display_realtime_job_detail(job)
+            else:
+                print_warning("未找到该实时作业")
+        else:
+            # 实时作业列表
+            jobs, total, error = api.query_realtime_jobs(params)
+            if error:
+                print_error(f"查询失败: {error}")
+                sys.exit(1)
+            display_realtime_jobs(jobs, total)
+    
+    # 底部提示
+    print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
+    print(f"  提示: 使用 {Colors.YELLOW}python scripts/cache.py --switch \"中心名称\"{Colors.END} 切换计算中心")
+    print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
+
+
+if __name__ == "__main__":
+    main()
