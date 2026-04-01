@@ -23,6 +23,9 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 
+# Windows 终端兼容处理
+import compat
+
 # 异步HTTP支持
 try:
     import aiohttp
@@ -229,6 +232,8 @@ def _refresh_cache() -> bool:
             [sys.executable, str(cache_script)],
             capture_output=True,
             text=True,
+            encoding='utf-8',
+            errors='replace',
             timeout=CACHE_INITIALIZER_TIMEOUT
         )
         

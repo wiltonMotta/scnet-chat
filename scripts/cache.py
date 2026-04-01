@@ -31,6 +31,9 @@ import urllib.request
 import urllib.error
 import ssl
 
+# Windows 终端兼容处理
+import compat
+
 # 异步HTTP支持
 try:
     import aiohttp

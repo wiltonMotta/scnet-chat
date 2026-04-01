@@ -42,6 +42,9 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
 
+# Windows 终端兼容处理
+import compat
+
 # 导入配置文件
 from config import (
     CONFIG_PATH, CACHE_PATH, CACHE_MAX_AGE,
@@ -249,6 +252,8 @@ def _refresh_cache() -> bool:
             [sys.executable, str(cache_script)],
             capture_output=True,
             text=True,
+            encoding='utf-8',
+            errors='replace',
             timeout=35
         )
         

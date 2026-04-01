@@ -20,6 +20,18 @@ import argparse
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 
+# Windows 终端兼容处理（避免 GBK 编码下 UnicodeEncodeError 崩溃）
+if sys.platform == "win32":
+    # 启用 ANSI 颜色支持（Windows 10+）
+    os.system("")
+    # 强制 stdout/stderr 使用 utf-8，无法编码的字符用替换符代替
+    try:
+        import io
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # 添加 scripts 目录到路径
 SCRIPTS_DIR = Path(__file__).parent / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
@@ -505,7 +517,11 @@ def run_subprocess(cmd: List[str], timeout: int = None, capture: bool = True) ->
         
     try:
         if capture:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            result = subprocess.run(
+                cmd, capture_output=True, text=True,
+                encoding='utf-8', errors='replace',
+                timeout=timeout
+            )
             output = result.stdout or ""
             if result.stderr and result.returncode != 0:
                 output += f"\n{result.stderr}" if output else result.stderr
@@ -626,22 +642,22 @@ def handle_switch_cluster(cluster_name: str) -> str:
 
 def handle_user_info() -> str:
     """处理用户信息查询"""
-    return run_subprocess(["python3", str(SCRIPTS_DIR / "user.py")], timeout=TIMEOUT_QUICK)
+    return run_subprocess([sys.executable, str(SCRIPTS_DIR / "user.py")], timeout=TIMEOUT_QUICK)
 
 
 def handle_job_stats(params: Dict[str, Any]) -> str:
     """处理作业统计信息查询"""
-    return run_subprocess(["python3", str(SCRIPTS_DIR / "user.py"), "--stats"], timeout=TIMEOUT_NORMAL)
+    return run_subprocess([sys.executable, str(SCRIPTS_DIR / "user.py"), "--stats"], timeout=TIMEOUT_NORMAL)
 
 
 def handle_walltime(params: Dict[str, Any]) -> str:
     """处理机时查询"""
-    return run_subprocess(["python3", str(SCRIPTS_DIR / "user.py"), "--walltime"], timeout=TIMEOUT_QUICK)
+    return run_subprocess([sys.executable, str(SCRIPTS_DIR / "user.py"), "--walltime"], timeout=TIMEOUT_QUICK)
 
 
 def handle_job_list(params: Dict[str, Any]) -> str:
     """处理实时作业查询"""
-    cmd = ["python3", str(SCRIPTS_DIR / "job.py")]
+    cmd = [sys.executable, str(SCRIPTS_DIR / "job.py")]
     
     # 添加筛选参数
     if params.get("status"):
@@ -656,7 +672,7 @@ def handle_job_list(params: Dict[str, Any]) -> str:
 
 def handle_job_history(params: Dict[str, Any]) -> str:
     """处理历史作业查询"""
-    cmd = ["python3", str(SCRIPTS_DIR / "job.py"), "--history"]
+    cmd = [sys.executable, str(SCRIPTS_DIR / "job.py"), "--history"]
     
     # 添加筛选参数
     if params.get("status"):
@@ -677,7 +693,7 @@ def handle_job_detail(params: Dict[str, Any]) -> str:
     if not job_id:
         return "错误：请指定作业ID，例如：查询作业详情 123"
     
-    cmd = ["python3", str(SCRIPTS_DIR / "job.py"), "--job-id", job_id]
+    cmd = [sys.executable, str(SCRIPTS_DIR / "job.py"), "--job-id", job_id]
     return run_subprocess(cmd, timeout=TIMEOUT_NORMAL)
 
 
@@ -720,7 +736,7 @@ def handle_job_submit(params: Dict[str, Any]) -> str:
     if not params.get("queue"):
         return f"错误：未指定队列，且无法从缓存获取默认队列。\n请使用 --queue 参数指定队列，或先刷新缓存获取可用队列。\n查询可用队列：python scnet.py \"查询队列\""
     
-    cmd = ["python3", str(SCRIPTS_DIR / "job.py"), "--submit"]
+    cmd = [sys.executable, str(SCRIPTS_DIR / "job.py"), "--submit"]
     
     # 添加参数
     if params.get("cmd"):
@@ -803,25 +819,25 @@ def handle_job_delete(params: Dict[str, Any]) -> str:
     if not job_id:
         return "错误：请指定作业ID，例如：删除作业 123"
     
-    cmd = ["python3", str(SCRIPTS_DIR / "job.py"), "--delete", "--job-id", job_id]
+    cmd = [sys.executable, str(SCRIPTS_DIR / "job.py"), "--delete", "--job-id", job_id]
     return run_subprocess(cmd, timeout=TIMEOUT_COMPLEX)
 
 
 def handle_job_queues() -> str:
     """处理队列查询"""
-    cmd = ["python3", str(SCRIPTS_DIR / "job.py"), "--queues"]
+    cmd = [sys.executable, str(SCRIPTS_DIR / "job.py"), "--queues"]
     return run_subprocess(cmd, timeout=TIMEOUT_NORMAL)
 
 
 def handle_cluster_info() -> str:
     """处理集群信息查询"""
-    cmd = ["python3", str(SCRIPTS_DIR / "job.py"), "--cluster-info"]
+    cmd = [sys.executable, str(SCRIPTS_DIR / "job.py"), "--cluster-info"]
     return run_subprocess(cmd, timeout=TIMEOUT_QUICK)
 
 
 def handle_file_list(params: Dict[str, Any]) -> str:
     """处理文件列表查询"""
-    cmd = ["python3", str(SCRIPTS_DIR / "file.py"), "--list"]
+    cmd = [sys.executable, str(SCRIPTS_DIR / "file.py"), "--list"]
     
     path = params.get("path")
     if path:
@@ -836,7 +852,7 @@ def handle_file_upload(params: Dict[str, Any]) -> str:
     remote_path = params.get("remote_path")
     
     if local_path and remote_path:
-        cmd = ["python3", str(SCRIPTS_DIR / "file.py"), "--upload", local_path, remote_path]
+        cmd = [sys.executable, str(SCRIPTS_DIR / "file.py"), "--upload", local_path, remote_path]
         return run_subprocess(cmd, timeout=TIMEOUT_TRANSFER)
     else:
         return "请指定本地文件路径和远程目标路径\n用法: 上传文件 <本地文件> <远程目录>\n或: python scripts/file.py --upload <本地文件> <远程目录>"
@@ -848,7 +864,7 @@ def handle_file_download(params: Dict[str, Any]) -> str:
     local_path = params.get("local_path")
     
     if remote_path and local_path:
-        cmd = ["python3", str(SCRIPTS_DIR / "file.py"), "--download", remote_path, local_path]
+        cmd = [sys.executable, str(SCRIPTS_DIR / "file.py"), "--download", remote_path, local_path]
         return run_subprocess(cmd, timeout=TIMEOUT_TRANSFER)
     else:
         return "请指定远程文件路径和本地目标路径\n用法: 下载文件 <远程文件> <本地目录>\n或: python scripts/file.py --download <远程文件> <本地目录>"
@@ -860,7 +876,7 @@ def handle_file_mkdir(params: Dict[str, Any]) -> str:
     if not path:
         return "错误：请指定目录路径"
     
-    cmd = ["python3", str(SCRIPTS_DIR / "file.py"), "--mkdir", path]
+    cmd = [sys.executable, str(SCRIPTS_DIR / "file.py"), "--mkdir", path]
     return run_subprocess(cmd, timeout=TIMEOUT_NORMAL)
 
 
@@ -870,7 +886,7 @@ def handle_file_touch(params: Dict[str, Any]) -> str:
     if not path:
         return "错误：请指定文件路径"
     
-    cmd = ["python3", str(SCRIPTS_DIR / "file.py"), "--touch", path]
+    cmd = [sys.executable, str(SCRIPTS_DIR / "file.py"), "--touch", path]
     return run_subprocess(cmd, timeout=TIMEOUT_NORMAL)
 
 
@@ -880,7 +896,7 @@ def handle_file_delete(params: Dict[str, Any]) -> str:
     if not path:
         return "错误：请指定文件路径"
     
-    cmd = ["python3", str(SCRIPTS_DIR / "file.py"), "--delete", path]
+    cmd = [sys.executable, str(SCRIPTS_DIR / "file.py"), "--delete", path]
     return run_subprocess(cmd, timeout=TIMEOUT_NORMAL)
 
 
@@ -892,7 +908,7 @@ def handle_file_rename(params: Dict[str, Any]) -> str:
     if not old_path or not new_name:
         return "错误：请指定原文件路径和新名称\n用法: 重命名 <原路径> 为 <新名称>"
     
-    cmd = ["python3", str(SCRIPTS_DIR / "file.py"), "--rename", old_path, new_name]
+    cmd = [sys.executable, str(SCRIPTS_DIR / "file.py"), "--rename", old_path, new_name]
     return run_subprocess(cmd, timeout=TIMEOUT_NORMAL)
 
 
@@ -904,7 +920,7 @@ def handle_file_copy(params: Dict[str, Any]) -> str:
     if not src or not dst:
         return "错误：请指定源文件和目标路径\n用法: 复制文件 <源文件> 到 <目标目录>"
     
-    cmd = ["python3", str(SCRIPTS_DIR / "file.py"), "--copy", src, dst]
+    cmd = [sys.executable, str(SCRIPTS_DIR / "file.py"), "--copy", src, dst]
     return run_subprocess(cmd, timeout=TIMEOUT_NORMAL)
 
 
@@ -916,7 +932,7 @@ def handle_file_move(params: Dict[str, Any]) -> str:
     if not src or not dst:
         return "错误：请指定源文件和目标路径\n用法: 移动文件 <源文件> 到 <目标目录>"
     
-    cmd = ["python3", str(SCRIPTS_DIR / "file.py"), "--move", src, dst]
+    cmd = [sys.executable, str(SCRIPTS_DIR / "file.py"), "--move", src, dst]
     return run_subprocess(cmd, timeout=TIMEOUT_NORMAL)
 
 
@@ -926,7 +942,7 @@ def handle_file_exists(params: Dict[str, Any]) -> str:
     if not path:
         return "错误：请指定文件路径"
     
-    cmd = ["python3", str(SCRIPTS_DIR / "file.py"), "--exists", path]
+    cmd = [sys.executable, str(SCRIPTS_DIR / "file.py"), "--exists", path]
     return run_subprocess(cmd, timeout=TIMEOUT_QUICK)
 
 

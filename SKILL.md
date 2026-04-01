@@ -27,18 +27,20 @@ clawhub:
 
 本 Skill 需要 Python 3.7+ 环境，依赖以下 Python 包：
 
+> **Windows 用户注意**：在 Windows 环境下请使用 `python` 命令运行（`python3` 可能指向无效重定向器，导致脚本无输出）。
+
 ### 必需依赖
 
 ```bash
 # 安装 aiohttp（用于异步并行查询，提升性能）
-python3 -m pip install aiohttp
+python -m pip install aiohttp
 ```
 
 ### 可选：使用虚拟环境（推荐）
 
 ```bash
 # 创建虚拟环境
-python3 -m venv ~/.scnet-chat-venv
+python -m venv ~/.scnet-chat-venv
 
 # 激活虚拟环境
 source ~/.scnet-chat-venv/bin/activate
@@ -48,7 +50,7 @@ pip install aiohttp
 
 # 后续使用时需要激活虚拟环境
 source ~/.scnet-chat-venv/bin/activate
-python3 scnet.py "查询作业"
+python scnet.py "查询作业"
 ```
 
 ### 依赖说明
@@ -90,7 +92,7 @@ SCNET_AC_URL=https://www.scnet.cn
 ### 通用调用方式
 
 ```bash
-python3 scnet.py "自然语言命令"
+python scnet.py "自然语言命令"
 ```
 
 ### 1. 缓存管理
@@ -157,9 +159,9 @@ python3 scnet.py "自然语言命令"
 
 ```bash
 # 查看提交作业帮助
-python3 scnet.py "如何提交作业"
-python3 scnet.py "提交作业帮助"
-python3 scnet.py "作业有哪些参数"
+python scnet.py "如何提交作业"
+python scnet.py "提交作业帮助"
+python scnet.py "作业有哪些参数"
 ```
 
 **支持的参数**（参考 [API 文档](https://www.scnet.cn/ac/openapi/doc/2.0/api/jobmanager/job.html)）：
@@ -185,23 +187,23 @@ python3 scnet.py "作业有哪些参数"
 
 ```bash
 # 简单命令
-python3 scnet.py "提交作业 sleep 900"
+python scnet.py "提交作业 sleep 900"
 
 # 指定队列和运行时间
-python3 scnet.py "提交作业 sleep 900 --queue comp --wall-time 00:30:00"
+python scnet.py "提交作业 sleep 900 --queue comp --wall-time 00:30:00"
 
 # 在指定中心提交作业
-python3 scnet.py "在昆山提交作业 hostname"
-python3 scnet.py "在山东提交作业 mpirun -np 4 ./myapp"
+python scnet.py "在昆山提交作业 hostname"
+python scnet.py "在山东提交作业 mpirun -np 4 ./myapp"
 
 # MPI 并行作业
-python3 scnet.py "提交作业 mpirun -np 8 ./myapp --queue normal --nnode 2 --job-name test-mpi"
+python scnet.py "提交作业 mpirun -np 8 ./myapp --queue normal --nnode 2 --job-name test-mpi"
 
 # GPU 作业
-python3 scnet.py "提交作业 ./gpu_program --queue gpu --ngpu 1 --job-mem 16GB"
+python scnet.py "提交作业 ./gpu_program --queue gpu --ngpu 1 --job-mem 16GB"
 
 # 完整参数示例
-python3 scnet.py "提交作业 --cmd './myapp' --queue comp --nnode 2 --ppn 8 --wall-time 12:00:00 --job-name production-run"
+python scnet.py "提交作业 --cmd './myapp' --queue comp --nnode 2 --ppn 8 --wall-time 12:00:00 --job-name production-run"
 ```
 
 #### 4.3 删除作业
@@ -252,57 +254,57 @@ python3 scnet.py "提交作业 --cmd './myapp' --queue comp --nnode 2 --ppn 8 --
 
 ```bash
 # 缓存管理
-python3 scnet.py "刷新缓存"
+python scnet.py "刷新缓存"
 
 # 数据中心切换
-python3 scnet.py "切换到山东"
-python3 scnet.py "切换到西安"
+python scnet.py "切换到山东"
+python scnet.py "切换到西安"
 
 # 用户信息查询
-python3 scnet.py "查询用户"
-python3 scnet.py "我的账户信息"
-python3 scnet.py "作业统计"
-python3 scnet.py "机时"
+python scnet.py "查询用户"
+python scnet.py "我的账户信息"
+python scnet.py "作业统计"
+python scnet.py "机时"
 
 # 作业管理 - 查询
-python3 scnet.py "查询作业"
-python3 scnet.py "查看运行中的作业"
-python3 scnet.py "历史作业"
-python3 scnet.py "作业详情 12345"
+python scnet.py "查询作业"
+python scnet.py "查看运行中的作业"
+python scnet.py "历史作业"
+python scnet.py "作业详情 12345"
 
 # 作业管理 - 提交和删除
-python3 scnet.py "提交作业"
-python3 scnet.py "提交作业 --cmd 'mpirun -np 4 ./myapp' --queue normal"
-python3 scnet.py "删除作业 12345"
+python scnet.py "提交作业"
+python scnet.py "提交作业 --cmd 'mpirun -np 4 ./myapp' --queue normal"
+python scnet.py "删除作业 12345"
 
 # 作业管理 - 队列和集群
-python3 scnet.py "查询队列"
-python3 scnet.py "集群信息"
+python scnet.py "查询队列"
+python scnet.py "集群信息"
 
 # 文件管理 - 列表和上传下载
-python3 scnet.py "文件列表"
-python3 scnet.py "查看文件 /public/home/user"
-python3 scnet.py "上传文件 ./data.txt 到 /public/home/user/"
-python3 scnet.py "下载文件 /public/home/user/result.txt 到 ./"
+python scnet.py "文件列表"
+python scnet.py "查看文件 /public/home/user"
+python scnet.py "上传文件 ./data.txt 到 /public/home/user/"
+python scnet.py "下载文件 /public/home/user/result.txt 到 ./"
 
 # 文件管理 - 创建和删除
-python3 scnet.py "创建目录 /public/home/user/workspace"
-python3 scnet.py "创建文件 /public/home/user/hello.txt"
-python3 scnet.py "删除文件 /public/home/user/old.txt"
+python scnet.py "创建目录 /public/home/user/workspace"
+python scnet.py "创建文件 /public/home/user/hello.txt"
+python scnet.py "删除文件 /public/home/user/old.txt"
 
 # 文件管理 - 复制移动和重命名
-python3 scnet.py "复制文件 /src/data.txt 到 /dst/"
-python3 scnet.py "移动文件 /src/data.txt 到 /dst/"
-python3 scnet.py "重命名 /old/name.txt 为 newname.txt"
+python scnet.py "复制文件 /src/data.txt 到 /dst/"
+python scnet.py "移动文件 /src/data.txt 到 /dst/"
+python scnet.py "重命名 /old/name.txt 为 newname.txt"
 
 # 帮助
-python3 scnet.py "帮助"
+python scnet.py "帮助"
 ```
 
 ### 交互式使用
 
 ```bash
-python3 scnet.py
+python scnet.py
 
 SCNet Skill | 输入自然语言命令，或 'help' 查看帮助
 
@@ -345,63 +347,63 @@ SCNet Skill | 输入自然语言命令，或 'help' 查看帮助
 
 ```bash
 # 查询实时作业
-python3 scripts/job.py
+python scripts/job.py
 
 # 查询历史作业
-python3 scripts/job.py --history
+python scripts/job.py --history
 
 # 查询作业详情
-python3 scripts/job.py --job-id 123
+python scripts/job.py --job-id 123
 
 # 提交作业（带参数）
-python3 scripts/job.py --submit --cmd "sleep 100" --queue debug
+python scripts/job.py --submit --cmd "sleep 100" --queue debug
 
 # 删除作业
-python3 scripts/job.py --delete --job-id 123
+python scripts/job.py --delete --job-id 123
 
 # 查询队列
-python3 scripts/job.py --queues
+python scripts/job.py --queues
 
 # 查询集群信息
-python3 scripts/job.py --cluster-info
+python scripts/job.py --cluster-info
 ```
 
 ### 文件管理 (scripts/file.py)
 
 ```bash
 # 列出文件
-python3 scripts/file.py --list [路径]
+python scripts/file.py --list [路径]
 
 # 上传文件
-python3 scripts/file.py --upload <本地文件> <远程目录>
+python scripts/file.py --upload <本地文件> <远程目录>
 
 # 下载文件
-python3 scripts/file.py --download <远程文件> <本地目录>
+python scripts/file.py --download <远程文件> <本地目录>
 
 # 创建目录
-python3 scripts/file.py --mkdir <路径>
+python scripts/file.py --mkdir <路径>
 
 # 创建空文件
-python3 scripts/file.py --touch <路径>
+python scripts/file.py --touch <路径>
 
 # 删除文件
-python3 scripts/file.py --delete <路径>
+python scripts/file.py --delete <路径>
 
 # 重命名
-python3 scripts/file.py --rename <原路径> <新名称>
+python scripts/file.py --rename <原路径> <新名称>
 
 # 复制文件
-python3 scripts/file.py --copy <源> <目标>
+python scripts/file.py --copy <源> <目标>
 
 # 移动文件
-python3 scripts/file.py --move <源> <目标>
+python scripts/file.py --move <源> <目标>
 ```
 
 ### 用户信息 (scripts/user.py)
 
 ```bash
 # 查询用户信息（内部实现，不推荐直接调用）
-python3 scripts/user.py
+python scripts/user.py
 ```
 
 ---
