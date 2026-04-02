@@ -63,21 +63,6 @@ class Colors:
 class IntentRecognizer:
     """意图识别器 - 支持自然语言理解"""
     
-    # 区域映射
-    CLUSTERS = {
-        "昆山": "华东一区【昆山】", "华东一区": "华东一区【昆山】",
-        "哈尔滨": "东北一区【哈尔滨】", "东北": "东北一区【哈尔滨】",
-        "乌镇": "华东三区【乌镇】", "华东三区": "华东三区【乌镇】",
-        "西安": "西北一区【西安】", "西北": "西北一区【西安】",
-        "雄衡": "华北一区【雄衡】", "华北": "华北一区【雄衡】",
-        "山东": "华东四区【山东】", "华东四区": "华东四区【山东】",
-        "四川": "西南一区【四川】", "西南": "西南一区【四川】",
-        "广东": "华南一区【广东】", "华南": "华南一区【广东】", "华南一区": "华南一区【广东】",
-        "分区一": "核心节点【分区一】", "核心": "核心节点【分区一】",
-        "分区二": "核心节点【分区二】",
-        "武汉": "华中三区【武汉】", "华中": "华中三区【武汉】",
-    }
-    
     # 作业状态映射
     JOB_STATUS = {
         "running": ["运行", "running", "执行中"],
@@ -85,6 +70,32 @@ class IntentRecognizer:
         "completed": ["完成", "completed", "结束"],
         "exit": ["退出", "exit", "失败"],
     }
+    
+    def _load_clusters(self) -> Dict[str, str]:
+        """从用户缓存动态加载区域映射"""
+        import json
+        clusters = {}
+        try:
+            cache_path = get_cache_path()
+            if cache_path.exists():
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    cache = json.load(f)
+                for cluster in cache.get('clusters', []):
+                    name = cluster.get('clusterName')
+                    if not name:
+                        continue
+                    clusters[name] = name
+                    # 提取别名，如 "华东一区【昆山】" → "华东一区", "昆山"
+                    if '【' in name and '】' in name:
+                        prefix = name.split('【')[0]
+                        inner = name[name.find('【') + 1:name.find('】')]
+                        if prefix:
+                            clusters[prefix] = name
+                        if inner:
+                            clusters[inner] = name
+        except Exception:
+            pass
+        return clusters
     
     def recognize(self, text: str) -> Tuple[str, Dict[str, Any]]:
         """
@@ -105,7 +116,7 @@ class IntentRecognizer:
         is_job_submit = any(k in text_lower for k in ["提交作业", "提交任务", "submit job", "run job", "运行作业"])
         
         if not is_job_submit:
-            for key, name in self.CLUSTERS.items():
+            for key, name in self._load_clusters().items():
                 if key in text_lower:
                     params["cluster_name"] = name
                     return "switch_cluster", params
@@ -131,7 +142,7 @@ class IntentRecognizer:
         if is_job_submit:
             params.update(self._extract_job_params(text))
             # 检查是否指定了区域
-            for key, name in self.CLUSTERS.items():
+            for key, name in self._load_clusters().items():
                 if key in text_lower:
                     params["cluster_name"] = name
                     break
@@ -422,7 +433,7 @@ class IntentRecognizer:
             # 匹配 "提交作业 xxx" 格式（xxx 作为命令）
             # 移除区域名称后再提取命令
             text_clean = text
-            for key in self.CLUSTERS.keys():
+            for key in self._load_clusters().keys():
                 text_clean = text_clean.replace(key, '')
             cmd_match = re.search(r'提交作业\s+(.+)', text_clean)
             if cmd_match:
