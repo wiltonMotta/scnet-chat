@@ -47,7 +47,7 @@ import compat
 
 # 导入配置文件
 from config import (
-    CONFIG_PATH, CACHE_PATH, CACHE_MAX_AGE,
+    CONFIG_PATH, CACHE_PATH, get_cache_path, CACHE_MAX_AGE,
     JobTimeout, DEFAULT_JOB_NNODE, DEFAULT_JOB_WALL_TIME,
     DEFAULT_JOB_APPNAME, DEFAULT_SUBMIT_TYPE
 )
@@ -65,6 +65,11 @@ JOB_STATUS_MAP = {
     'statC': '完成',
     'statW': '等待',
     'statX': '其他',
+    'statDE': '取消',
+    'statD': '失败',
+    'statT': '超时',
+    'statN': '节点异常',
+    'statRQ': '重新运行',
     'running': 'statR',
     'queue': 'statQ',
     'queued': 'statQ',
@@ -75,7 +80,12 @@ JOB_STATUS_MAP = {
     'complete': 'statC',
     'wait': 'statW',
     'waiting': 'statW',
-    'other': 'statX'
+    'other': 'statX',
+    'cancelled': 'statDE',
+    'failed': 'statD',
+    'timeout': 'statT',
+    'nodefail': 'statN',
+    'rerun': 'statRQ',
 }
 
 
@@ -137,16 +147,17 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
     Returns:
         缓存数据，如果加载失败则返回 None
     """
+    cache_path = get_cache_path()
     # 检查缓存文件是否存在
-    if not CACHE_PATH.exists():
-        print_warning(f"缓存文件不存在: {CACHE_PATH}")
+    if not cache_path.exists():
+        print_warning(f"缓存文件不存在: {cache_path}")
         
         if auto_init:
             print(f"{Colors.CYAN}正在自动初始化缓存...{Colors.END}")
             if _refresh_cache():
                 # 重新加载缓存
                 try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e:
                     print_error(f"加载新缓存失败: {e}")
@@ -161,7 +172,7 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
     
     # 加载缓存文件
     try:
-        with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+        with open(cache_path, 'r', encoding='utf-8') as f:
             cache = json.load(f)
     except json.JSONDecodeError as e:
         print_error(f"缓存文件解析失败: {e}")
@@ -170,7 +181,7 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
             if _refresh_cache():
                 # 重新加载缓存
                 try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e2:
                     print_error(f"加载新缓存失败: {e2}")
@@ -186,7 +197,7 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
             if _refresh_cache():
                 # 重新加载缓存
                 try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e2:
                     print_error(f"加载新缓存失败: {e2}")
@@ -209,7 +220,7 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
             if _refresh_cache():
                 # 重新加载缓存
                 try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e:
                     print_error(f"加载新缓存失败: {e}")
@@ -298,12 +309,12 @@ def load_config_username() -> Optional[str]:
 
 
 def get_default_cluster(cache: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """获取默认计算中心"""
+    """获取默认区域"""
     clusters = cache.get('clusters', [])
     for cluster in clusters:
         if cluster.get('default') is True:
             return cluster
-    # 如果没有设置默认，返回第一个非 ac 的计算中心
+    # 如果没有设置默认，返回第一个非 ac 的区域
     for cluster in clusters:
         if cluster.get('clusterName') != 'ac':
             return cluster
@@ -737,16 +748,38 @@ def format_job_status(status_code: str) -> str:
         'statC': ('完成', Colors.GREEN),
         'statW': ('等待', Colors.YELLOW),
         'statX': ('其他', Colors.DIM),
+        'statDE': ('取消', Colors.YELLOW),
+        'statD': ('失败', Colors.RED),
+        'statT': ('超时', Colors.RED),
+        'statN': ('节点异常', Colors.RED),
+        'statRQ': ('重新运行', Colors.CYAN),
     }
     name, color = status_map.get(status_code, (status_code, Colors.END))
     return f"{color}{name}{Colors.END}"
+
+
+def resolve_realtime_status(job: Dict) -> str:
+    """
+    解析实时作业的真实状态。
+    平台顶层 jobStatus 有时会延迟同步（如 statC 实际已失败），
+    此时优先以 jobInitAttr.JobState 或 reason 字段为准。
+    """
+    status = job.get('jobStatus', 'N/A')
+    init_attr = job.get('jobInitAttr') or {}
+    inner_state = init_attr.get('JobState', '')
+    reason = job.get('reason', '')
+    
+    # statC 完成状态下，若底层调度器状态为 FAILED 或 reason 为非零退出码，则真实状态为失败(statD)
+    if status == 'statC' and (inner_state == 'FAILED' or reason == 'NonZeroExitCode'):
+        return 'statD'
+    return status
 
 
 def display_query_params(api: JobAPI, params: Dict[str, Any], is_history: bool = False):
     """显示查询条件参数"""
     print_section("🔍 查询条件")
     
-    print_item("计算中心", api.cluster_name)
+    print_item("区域", api.cluster_name)
     print_item("JobManager ID", api.job_manager_id)
     print_item("查询类型", "历史作业" if is_history else "实时作业")
     
@@ -784,7 +817,8 @@ def display_realtime_jobs(jobs: List[Dict], total: int):
         cpus = job.get('procNumUsed', 0)
         runtime = job.get('jobRunTime', 'N/A')
         
-        status_display = format_job_status(status)
+        real_status = resolve_realtime_status(job)
+        status_display = format_job_status(real_status)
         
         print(f"\n  {Colors.BOLD}{i}. 作业 {job_id}{Colors.END}")
         print(f"     名称: {Colors.CYAN}{job_name}{Colors.END}")
@@ -799,9 +833,10 @@ def display_realtime_job_detail(job: Dict):
     """显示实时作业详情"""
     print_section("📄 实时作业详情")
     
+    real_status = resolve_realtime_status(job)
     print_item("作业ID", job.get('jobId', 'N/A'))
     print_item("作业名称", job.get('jobName', 'N/A'))
-    print_item("状态", format_job_status(job.get('jobStatus', 'N/A')))
+    print_item("状态", format_job_status(real_status))
     print_item("队列", job.get('queue', 'N/A'))
     print_item("用户", job.get('user', 'N/A'))
     print_item("工作目录", job.get('workDir', 'N/A'))
@@ -1156,9 +1191,9 @@ def display_submit_result(job_id: Optional[str], message: str):
         # 提供常见错误解决方案
         if "Access/permission denied" in message or "access restricted" in message:
             print(f"\n{Colors.YELLOW}可能原因:{Colors.END}")
-            print(f"  1. 您的账户在当前计算中心没有作业提交权限")
-            print(f"  2. 请联系计算中心管理员开通权限")
-            print(f"  3. 或尝试切换到其他您有权限的计算中心")
+            print(f"  1. 您的账户在当前区域没有作业提交权限")
+            print(f"  2. 请联系区域管理员开通权限")
+            print(f"  3. 或尝试切换到其他您有权限的区域")
         elif "Required partition not available" in message:
             print(f"\n{Colors.YELLOW}可能原因:{Colors.END}")
             print(f"  1. 指定的队列当前不可用（维护或已满）")
@@ -1257,17 +1292,17 @@ def main():
     if not cache:
         sys.exit(1)
     
-    # 获取默认计算中心
+    # 获取默认区域
     cluster = get_default_cluster(cache)
     if not cluster:
-        print_error("未找到默认计算中心")
+        print_error("未找到默认区域")
         sys.exit(1)
     
     # 创建 API 客户端
     api = JobAPI(cluster)
     
     if not api.hpc_url:
-        print_error("当前计算中心未配置 HPC 服务")
+        print_error("当前区域未配置 HPC 服务")
         sys.exit(1)
     
     # 处理查询用户队列
@@ -1309,7 +1344,7 @@ def main():
         return
     
     if not api.job_manager_id:
-        print_error("当前计算中心未配置 JobManager")
+        print_error("当前区域未配置 JobManager")
         sys.exit(1)
     
     # 构建查询参数
@@ -1410,7 +1445,7 @@ def main():
         
         # 底部提示
         print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
-        print(f"  提示: 使用 {Colors.YELLOW}python scripts/cache.py --switch \"中心名称\"{Colors.END} 切换计算中心")
+        print(f"  提示: 使用 {Colors.YELLOW}python scripts/cache.py --switch \"中心名称\"{Colors.END} 切换区域")
         print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
         return
     
@@ -1437,15 +1472,21 @@ def main():
     else:
         # 实时作业查询
         if args.job_id:
-            # 实时作业详情
+            # 先查询实时作业详情
             job, error = api.query_realtime_job_detail(args.job_id)
-            if error:
-                print_error(f"查询失败: {error}")
-                sys.exit(1)
-            if job:
+            # 再查询历史作业详情（历史记录包含最终准确状态）
+            history_job, history_error = api.query_history_job_detail(args.job_id)
+            
+            if history_job:
+                # 优先使用历史记录，包含最终状态（如真实的失败/退出）和退出码
+                display_history_job_detail(history_job)
+            elif job:
                 display_realtime_job_detail(job)
             else:
-                print_warning("未找到该实时作业")
+                if error:
+                    print_error(f"查询失败: {error}")
+                    sys.exit(1)
+                print_warning("未找到该作业")
         else:
             # 实时作业列表
             jobs, total, error = api.query_realtime_jobs(params)
@@ -1456,7 +1497,7 @@ def main():
     
     # 底部提示
     print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
-    print(f"  提示: 使用 {Colors.YELLOW}python scripts/cache.py --switch \"中心名称\"{Colors.END} 切换计算中心")
+    print(f"  提示: 使用 {Colors.YELLOW}python scripts/cache.py --switch \"中心名称\"{Colors.END} 切换区域")
     print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
 
 

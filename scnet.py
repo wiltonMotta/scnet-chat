@@ -37,10 +37,10 @@ SCRIPTS_DIR = Path(__file__).parent / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 # 导入配置
-from config import CACHE_PATH, CONFIG_PATH
+from config import CACHE_PATH, CONFIG_PATH, get_cache_path
 
 # 导入配置文件
-from config import AppTimeout, CACHE_PATH
+from config import AppTimeout, CACHE_PATH, get_cache_path
 
 # 导入底层模块
 from cache import switch_default_cluster, CacheManager, ConfigManager, Logger, CacheInitializer
@@ -63,7 +63,7 @@ class Colors:
 class IntentRecognizer:
     """意图识别器 - 支持自然语言理解"""
     
-    # 计算中心映射
+    # 区域映射
     CLUSTERS = {
         "昆山": "华东一区【昆山】", "华东一区": "华东一区【昆山】",
         "哈尔滨": "东北一区【哈尔滨】", "东北": "东北一区【哈尔滨】",
@@ -130,7 +130,7 @@ class IntentRecognizer:
         # 提交作业（支持 "在[中心]提交作业" 格式）
         if is_job_submit:
             params.update(self._extract_job_params(text))
-            # 检查是否指定了计算中心
+            # 检查是否指定了区域
             for key, name in self.CLUSTERS.items():
                 if key in text_lower:
                     params["cluster_name"] = name
@@ -150,16 +150,17 @@ class IntentRecognizer:
         if any(k in text_lower for k in ["集群信息", "调度器信息", "cluster info", "scheduler info"]):
             return "cluster_info", params
             
+        # 历史作业查询（必须在作业详情之前，避免"历史作业详情"被误判为实时详情）
+        if any(k in text_lower for k in ["历史作业", "历史任务", "history jobs", "completed jobs"]):
+            params.update(self._extract_job_filter_params(text))
+            params["job_id"] = self._extract_job_id(text)
+            return "job_history", params
+            
         # 作业详情
         if any(k in text_lower for k in ["作业详情", "查看作业", "job detail"]):
             params["job_id"] = self._extract_job_id(text)
             if params["job_id"]:
                 return "job_detail", params
-            
-        # 历史作业查询
-        if any(k in text_lower for k in ["历史作业", "历史任务", "history jobs", "completed jobs"]):
-            params.update(self._extract_job_filter_params(text))
-            return "job_history", params
             
         # ========== 文件管理 ==========
         # 文件列表
@@ -244,7 +245,7 @@ class IntentRecognizer:
             r'作业[\s]*([0-9]+)',  # 作业 123
             r'job[\s]*([0-9]+)',   # job 123
             r'#([0-9]+)',          # #123
-            r'\b([0-9]{3,})\b',    # 至少3位数字
+            r'(?<!\d)([0-9]{3,})(?!\d)',  # 至少3位数字，前后非数字（兼容中文后的数字）
         ]
         for pattern in patterns:
             match = re.search(pattern, text.lower())
@@ -419,7 +420,7 @@ class IntentRecognizer:
                 params["cmd"] = cmd_match.group(1).strip()
         else:
             # 匹配 "提交作业 xxx" 格式（xxx 作为命令）
-            # 移除计算中心名称后再提取命令
+            # 移除区域名称后再提取命令
             text_clean = text
             for key in self.CLUSTERS.keys():
                 text_clean = text_clean.replace(key, '')
@@ -545,8 +546,8 @@ def check_config_exists() -> bool:
 
 def check_cache_exists() -> bool:
     """检查缓存文件是否存在"""
-    from config import CACHE_PATH
-    return CACHE_PATH.exists()
+    from config import get_cache_path
+    return get_cache_path().exists()
 
 
 def ensure_cache_initialized() -> Tuple[bool, str]:
@@ -612,8 +613,8 @@ def handle_cache_refresh(params=None) -> str:
         success = initializer.run()
         if success:
             if refresh_all:
-                return "✓ 所有计算中心缓存刷新成功"
-            return "✓ 默认计算中心缓存刷新成功\n  (使用 \"刷新全部缓存\" 可刷新所有计算中心)"
+                return "✓ 所有区域缓存刷新成功"
+            return "✓ 默认区域缓存刷新成功\n  (使用 \"刷新全部缓存\" 可刷新所有区域)"
         return "缓存刷新失败"
     except FileNotFoundError as e:
         return f"错误：{e}"
@@ -626,12 +627,12 @@ def handle_cache_refresh(params=None) -> str:
 def handle_switch_cluster(cluster_name: str) -> str:
     """处理切换数据中心"""
     if not cluster_name:
-        return "错误：未指定计算中心"
+        return "错误：未指定区域"
     
     try:
         success = switch_default_cluster(cluster_name)
         if success:
-            # 切换成功后，显示当前计算中心的账户信息
+            # 切换成功后，显示当前区域的账户信息
             result_msg = f"✓ 已切换到 {cluster_name}\n"
             user_info = handle_user_info()
             return result_msg + "\n" + user_info
@@ -675,6 +676,8 @@ def handle_job_history(params: Dict[str, Any]) -> str:
     cmd = [sys.executable, str(SCRIPTS_DIR / "job.py"), "--history"]
     
     # 添加筛选参数
+    if params.get("job_id"):
+        cmd.extend(["--job-id", params["job_id"]])
     if params.get("status"):
         cmd.extend(["--status", params["status"]])
     if params.get("queue"):
@@ -703,7 +706,7 @@ def handle_job_submit(params: Dict[str, Any]) -> str:
     if not params.get("cmd"):
         return handle_job_submit_help()
     
-    # 如果指定了计算中心，先切换
+    # 如果指定了区域，先切换
     cluster_name = params.get("cluster_name")
     if cluster_name:
         result = handle_switch_cluster(cluster_name)
@@ -715,7 +718,7 @@ def handle_job_submit(params: Dict[str, Any]) -> str:
     if not params.get("queue"):
         try:
             import json
-            with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+            with open(get_cache_path(), 'r', encoding='utf-8') as f:
                 cache = json.load(f)
             clusters = cache.get('clusters', [])
             default_cluster = None
@@ -760,52 +763,47 @@ def handle_job_submit_help() -> str:
     help_text = f"""
 {Colors.BOLD}{Colors.CYAN}作业提交帮助{Colors.END}
 
-{Colors.BOLD}基本语法:{Colors.END}
-  提交作业 <命令> [--参数 值]...
+{Colors.BOLD}1. 提交作业示例：{Colors.END}
 
-{Colors.BOLD}常用示例:{Colors.END}
   {Colors.GREEN}提交作业 sleep 900{Colors.END}
-    提交一个运行 sleep 900 的作业
-  
-  {Colors.GREEN}提交作业 --cmd "sleep 100" --queue comp{Colors.END}
-    指定队列提交作业
-  
-  {Colors.GREEN}在山东提交作业 hostname{Colors.END}
-    在指定计算中心提交作业
-  
-  {Colors.GREEN}提交作业 mpirun -np 4 ./myapp --queue normal --nnode 2{Colors.END}
-    多节点并行作业
 
-{Colors.BOLD}支持的参数:{Colors.END}
+  {Colors.GREEN}提交作业 作业名：job_test，命令行内容：sleep 900，工作目录：家目录/job_test/，节点数：1，最大运行时长：24:00:00{Colors.END}
 
-  {Colors.YELLOW}必填参数:{Colors.END}
-    cmd          执行的命令（也可直接跟在"提交作业"后）
-  
-  {Colors.YELLOW}常用可选参数:{Colors.END}
-    --queue      队列名称（如 comp, debug, normal）
-    --nnode      节点数量（默认 1）
-    --work-dir   工作目录（默认 /public/home/<用户名>）
-    --job-name   作业名称（默认自动生成）
-    --wall-time  最大运行时间（默认 24:00:00，格式 HH:MM:SS）
-  
-  {Colors.YELLOW}资源参数:{Colors.END}
-    --nproc      总核心数
-    --ppn        每节点核心数
-    --ngpu       GPU卡数/节点
-    --ndcu       DCU卡数/节点
-    --job-mem    每个节点内存（MB/GB）
-    --exclusive  是否独占节点（1=独占）
-  
-  {Colors.YELLOW}输出参数:{Colors.END}
-    --std-out    标准输出文件路径
-    --std-err    标准错误文件路径
+{Colors.BOLD}2. 常用参数（mapAppJobInfo）：{Colors.END}
 
-{Colors.BOLD}提交前准备:{Colors.END}
-  1. 确保已在正确的计算中心（使用"切换到<中心名>"）
+  参数名              | 描述                                          | 示例
+  ------------------- | --------------------------------------------- | --------------------------
+  GAP_CMD_FILE        | 命令行内容（如需换行，请使用 \\n）              | sleep 500
+  GAP_JOB_NAME        | 作业名称                                      | job_test
+  GAP_QUEUE           | 队列名称                                      | debug
+  GAP_WORK_DIR        | 工作路径                                      | /public/home/test/job_test
+  GAP_NNODE           | 节点个数（与 GAP_NODE_STRING 二选一）         | 1
+  GAP_NODE_STRING     | 指定节点（与 GAP_NNODE 二选一，另一个须为""） | 
+  GAP_WALL_TIME       | 最大运行时长（HH:MM:ss）                      | 24:00:00
+  GAP_SUBMIT_TYPE     | 提交类型，cmd 为命令行模式                    | cmd
+  GAP_APPNAME         | 应用名称，BASE 为基础应用                     | BASE
+  GAP_NPROC           | 总核心数（与 GAP_PPN 选其一填写）             | 8
+  GAP_PPN             | CPU 核心/节点（与 GAP_NPROC 选其一填写）      | 4
+  GAP_NGPU            | GPU 卡数/节点                                 | 1
+  GAP_NDCU            | DCU 卡数/节点                                 | 1
+  GAP_JOB_MEM         | 每个节点内存值，单位为 MB/GB                  | 16GB
+  GAP_EXCLUSIVE       | 是否独占节点，1 为独占，空 为非独占           | 1
+  GAP_MULTI_SUB       | 作业组长度，建议小于等于 50 的正整数          | 10
+  GAP_STD_OUT_FILE    | 标准输出文件路径                              | /public/home/test/std.out.%j
+  GAP_STD_ERR_FILE    | 标准错误文件路径                              | /public/home/test/std.err.%j
+
+{Colors.YELLOW}自然语言交互提示：{Colors.END}
+  你可以直接使用“参数名：值”的格式来提交作业，例如：
+  {Colors.GREEN}提交作业 作业名：test，命令行内容：sleep 900，队列：debug，节点数：1{Colors.END}
+  {Colors.GREEN}提交作业 命令行内容：mpirun -np 4 ./myapp，节点数：2，CPU核心/节点：4，最大运行时长：12:00:00{Colors.END}
+  {Colors.GREEN}在山东提交作业 作业名：gpu_train，命令行内容：python train.py，队列：gpu，GPU卡数/节点：1，节点内存：32GB{Colors.END}
+
+{Colors.BOLD}提交前准备：{Colors.END}
+  1. 确保已在正确的区域（使用"切换到<中心名>"）
   2. 查询可用队列（使用"查询队列"）
   3. 确认工作目录存在且有权限
 
-{Colors.BOLD}相关命令:{Colors.END}
+{Colors.BOLD}相关命令：{Colors.END}
   {Colors.CYAN}查询队列{Colors.END}     查看可用队列
   {Colors.CYAN}查询作业{Colors.END}     查看已提交作业状态
   {Colors.CYAN}删除作业 <ID>{Colors.END} 取消或删除作业
@@ -955,7 +953,7 @@ def print_help():
    • 刷新缓存 / 初始化缓存
 
 {Colors.BOLD}2. 数据中心切换{Colors.END}
-   • 切换到 [计算中心]
+   • 切换到 [区域]
      可选: 昆山、山东、西安、四川、武汉、哈尔滨、分区一、分区二等
 
 {Colors.BOLD}3. 用户信息查询{Colors.END}

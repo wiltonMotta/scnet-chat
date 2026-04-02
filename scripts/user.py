@@ -2,7 +2,7 @@
 """
 SCNet 用户信息查看工具
 
-从缓存中获取并显示当前计算中心的详细信息，以及其他可用计算中心列表。
+从缓存中获取并显示当前区域的详细信息，以及其他可用区域列表。
 支持动态查询作业统计信息。
 
 使用方法:
@@ -35,7 +35,7 @@ except ImportError:
 
 # 导入配置文件
 from config import (
-    CONFIG_PATH, CACHE_PATH, CACHE_MAX_AGE,
+    CONFIG_PATH, CACHE_PATH, get_cache_path, CACHE_MAX_AGE,
     ClusterTimeout, CACHE_INITIALIZER_TIMEOUT,
     ASYNC_CONCURRENCY_LIMIT
 )
@@ -118,16 +118,17 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
     Returns:
         缓存数据，如果加载失败则返回 None
     """
+    cache_path = get_cache_path()
     # 检查缓存文件是否存在
-    if not CACHE_PATH.exists():
-        print_warning(f"缓存文件不存在: {CACHE_PATH}")
+    if not cache_path.exists():
+        print_warning(f"缓存文件不存在: {cache_path}")
         
         if auto_init:
             print(f"{Colors.CYAN}正在自动初始化缓存...{Colors.END}")
             if _refresh_cache():
                 # 重新加载缓存
                 try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e:
                     print_error(f"加载新缓存失败: {e}")
@@ -142,7 +143,7 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
     
     # 加载缓存文件
     try:
-        with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+        with open(cache_path, 'r', encoding='utf-8') as f:
             cache = json.load(f)
     except json.JSONDecodeError as e:
         print_error(f"缓存文件解析失败: {e}")
@@ -151,7 +152,7 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
             if _refresh_cache():
                 # 重新加载缓存
                 try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e2:
                     print_error(f"加载新缓存失败: {e2}")
@@ -167,7 +168,7 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
             if _refresh_cache():
                 # 重新加载缓存
                 try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e2:
                     print_error(f"加载新缓存失败: {e2}")
@@ -190,7 +191,7 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
             if _refresh_cache():
                 # 重新加载缓存
                 try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e:
                     print_error(f"加载新缓存失败: {e}")
@@ -254,11 +255,11 @@ def _refresh_cache() -> bool:
 
 
 def get_default_cluster(clusters: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """获取默认计算中心"""
+    """获取默认区域"""
     for cluster in clusters:
         if cluster.get('default') is True:
             return cluster
-    # 如果没有设置默认，返回第一个非 ac 的计算中心
+    # 如果没有设置默认，返回第一个非 ac 的区域
     for cluster in clusters:
         if cluster.get('clusterName') != 'ac':
             return cluster
@@ -266,19 +267,19 @@ def get_default_cluster(clusters: List[Dict[str, Any]]) -> Optional[Dict[str, An
 
 
 def get_other_clusters(clusters: List[Dict[str, Any]], current_id: str) -> List[Dict[str, Any]]:
-    """获取其他计算中心（排除 ac 和当前计算中心）"""
+    """获取其他区域（排除 ac 和当前区域）"""
     others = []
     for cluster in clusters:
         name = cluster.get('clusterName', '')
         cid = cluster.get('clusterId', '')
-        # 排除 ac 和当前计算中心
+        # 排除 ac 和当前区域
         if name != 'ac' and cid != current_id:
             others.append(cluster)
     return others
 
 
 class ClusterAPI:
-    """计算中心 API 客户端 - 动态查询作业统计信息"""
+    """区域 API 客户端 - 动态查询作业统计信息"""
     
     # 从配置文件导入超时时间
     TIMEOUT_QUERY_JOB_STATE = ClusterTimeout.QUERY_JOB_STATE
@@ -417,7 +418,7 @@ class ClusterAPI:
 
 
 class AsyncClusterAPI:
-    """异步计算中心 API 客户端 - 并行查询作业统计信息"""
+    """异步区域 API 客户端 - 并行查询作业统计信息"""
     
     def __init__(self, cluster: Dict[str, Any]):
         self.cluster = cluster
@@ -886,11 +887,11 @@ def display_walltime(cluster: Dict[str, Any]):
 
 
 def display_other_clusters(others: List[Dict[str, Any]]):
-    """显示其他计算中心"""
+    """显示其他区域"""
     if not others:
         return
     
-    print_section(f"📋 其他计算中心 ({len(others)}个)")
+    print_section(f"📋 其他区域 ({len(others)}个)")
     
     for i, cluster in enumerate(others, 1):
         name = cluster.get('clusterName', 'N/A')
@@ -930,13 +931,13 @@ def main():
     
     clusters = cache.get('clusters', [])
     if not clusters:
-        print_error("缓存中没有计算中心数据")
+        print_error("缓存中没有区域数据")
         sys.exit(1)
     
-    # 获取当前默认计算中心
+    # 获取当前默认区域
     current = get_default_cluster(clusters)
     if not current:
-        print_error("未找到默认计算中心")
+        print_error("未找到默认区域")
         sys.exit(1)
     
     # 根据参数显示不同信息
@@ -951,7 +952,7 @@ def main():
         # 打印主标题
         cluster_name = current.get('clusterName', 'N/A')
         cluster_id = current.get('clusterId', '')
-        print_header(f"当前计算中心: {cluster_name}")
+        print_header(f"当前区域: {cluster_name}")
         
         # 用户信息
         user_info = current.get('clusterUserInfo', {})

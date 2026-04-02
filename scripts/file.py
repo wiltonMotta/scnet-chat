@@ -36,7 +36,7 @@ import compat
 
 # 导入配置文件
 from config import (
-    CONFIG_PATH, CACHE_PATH, CACHE_MAX_AGE,
+    CONFIG_PATH, CACHE_PATH, get_cache_path, CACHE_MAX_AGE,
     FileTimeout, CACHE_INITIALIZER_TIMEOUT
 )
 
@@ -102,16 +102,17 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
     Returns:
         缓存数据，如果加载失败则返回 None
     """
+    cache_path = get_cache_path()
     # 检查缓存文件是否存在
-    if not CACHE_PATH.exists():
-        print_warning(f"缓存文件不存在: {CACHE_PATH}")
+    if not cache_path.exists():
+        print_warning(f"缓存文件不存在: {cache_path}")
         
         if auto_init:
             print(f"{Colors.CYAN}正在自动初始化缓存...{Colors.END}")
             if _refresh_cache():
                 # 重新加载缓存
                 try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e:
                     print_error(f"加载新缓存失败: {e}")
@@ -126,7 +127,7 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
     
     # 加载缓存文件
     try:
-        with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+        with open(cache_path, 'r', encoding='utf-8') as f:
             cache = json.load(f)
     except json.JSONDecodeError as e:
         print_error(f"缓存文件解析失败: {e}")
@@ -135,7 +136,7 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
             if _refresh_cache():
                 # 重新加载缓存
                 try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e2:
                     print_error(f"加载新缓存失败: {e2}")
@@ -151,7 +152,7 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
             if _refresh_cache():
                 # 重新加载缓存
                 try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e2:
                     print_error(f"加载新缓存失败: {e2}")
@@ -174,7 +175,7 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
             if _refresh_cache():
                 # 重新加载缓存
                 try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e:
                     print_error(f"加载新缓存失败: {e}")
@@ -235,7 +236,7 @@ def _refresh_cache() -> bool:
 
 
 def get_default_cluster(cache: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """获取默认计算中心"""
+    """获取默认区域"""
     clusters = cache.get('clusters', [])
     for cluster in clusters:
         if cluster.get('default') is True:
@@ -711,17 +712,17 @@ def main():
     if not cache:
         sys.exit(1)
     
-    # 获取默认计算中心
+    # 获取默认区域
     cluster = get_default_cluster(cache)
     if not cluster:
-        print_error("未找到默认计算中心")
+        print_error("未找到默认区域")
         sys.exit(1)
     
     # 创建 API 客户端
     api = FileAPI(cluster)
     
     if not api.efile_url:
-        print_error("当前计算中心未配置文件服务")
+        print_error("当前区域未配置文件服务")
         sys.exit(1)
     
     # 打印标题
@@ -857,7 +858,7 @@ def main():
     
     # 底部提示
     print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
-    print(f"  提示: 使用 {Colors.YELLOW}python scripts/cache.py --switch \"中心名称\"{Colors.END} 切换计算中心")
+    print(f"  提示: 使用 {Colors.YELLOW}python scripts/cache.py --switch \"中心名称\"{Colors.END} 切换区域")
     print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
 
 

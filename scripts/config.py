@@ -12,38 +12,34 @@ import os
 # 路径配置
 # =============================================================================
 
-def _get_cache_path() -> Path:
-    """获取缓存文件路径，根据用户名区分不同用户的缓存"""
-    # 从环境变量或配置文件读取用户名
-    username = os.environ.get('SCNET_USER', '')
-    
-    # 如果环境变量没有设置，尝试从配置文件读取
-    if not username:
-        config_path = Path.home() / ".scnet-chat.env"
-        if config_path.exists():
-            try:
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        line = line.strip()
-                        if line.startswith('SCNET_USER='):
-                            username = line.split('=', 1)[1].strip()
-                            break
-            except Exception:
-                pass
-    
-    # 构建缓存文件名
-    if username:
-        cache_filename = f".scnet-chat-cache-{username}.json"
-    else:
-        cache_filename = ".scnet-chat-cache.json"
-    
-    return Path.home() / cache_filename
-
-# 缓存文件路径（~/.scnet-chat-cache-{username}.json）
-CACHE_PATH = _get_cache_path()
-
 # 配置文件路径（~/.scnet-chat.env）
 CONFIG_PATH = Path.home() / ".scnet-chat.env"
+
+
+def get_cache_path(config_path: Path = CONFIG_PATH) -> Path:
+    """根据配置文件中的 SCNET_USER 获取缓存文件路径"""
+    username = None
+    if config_path.exists():
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        if key.strip() == 'SCNET_USER':
+                            username = value.strip()
+                            break
+        except Exception:
+            pass
+    if not username:
+        return Path.home() / ".scnet-chat-cache.json"
+    return Path.home() / f".scnet-chat-cache-{username}.json"
+
+
+# 缓存文件路径
+CACHE_PATH = get_cache_path()
 
 # =============================================================================
 # 缓存过期时间（秒）
