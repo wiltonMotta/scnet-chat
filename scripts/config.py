@@ -38,7 +38,7 @@ def get_cache_path(config_path: Path = CONFIG_PATH) -> Path:
     return Path.home() / f".scnet-chat-cache-{username}.json"
 
 
-# 缓存文件路径
+# 向后兼容的缓存文件路径常量
 CACHE_PATH = get_cache_path()
 
 # =============================================================================

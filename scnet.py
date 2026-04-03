@@ -111,7 +111,7 @@ class IntentRecognizer:
         if any(k in text_lower for k in ["刷新缓存", "初始化缓存", "更新缓存", "reload cache", "刷新全部缓存", "刷新所有缓存"]):
             return "cache_refresh", params
             
-        # ========== 数据中心切换 ==========
+        # ========== 区域切换 ==========
         # 检查是否包含提交作业关键词（如"在山东提交作业"应优先处理提交）
         is_job_submit = any(k in text_lower for k in ["提交作业", "提交任务", "submit job", "run job", "运行作业"])
         
@@ -251,6 +251,19 @@ class IntentRecognizer:
     
     def _extract_job_id(self, text: str) -> Optional[str]:
         """从文本中提取作业ID"""
+        # 先排除日期时间格式的数字（避免误识别 2024-01-01 中的 2024）
+        # 移除日期时间格式: 2024-01-01, 2024-01-01 00:00:00, 00:00:00 等
+        import re
+        text_cleaned = text
+        
+        # 移除完整日期时间格式
+        text_cleaned = re.sub(r'\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}', '', text_cleaned)
+        # 移除日期格式
+        text_cleaned = re.sub(r'\d{4}-\d{2}-\d{2}', '', text_cleaned)
+        # 移除时间格式
+        text_cleaned = re.sub(r'\d{2}:\d{2}:\d{2}', '', text_cleaned)
+        text_cleaned = re.sub(r'\d{2}:\d{2}', '', text_cleaned)
+        
         # 匹配数字ID
         patterns = [
             r'作业[\s]*([0-9]+)',  # 作业 123
@@ -259,7 +272,7 @@ class IntentRecognizer:
             r'(?<!\d)([0-9]{3,})(?!\d)',  # 至少3位数字，前后非数字（兼容中文后的数字）
         ]
         for pattern in patterns:
-            match = re.search(pattern, text.lower())
+            match = re.search(pattern, text_cleaned.lower())
             if match:
                 return match.group(1)
         return None
@@ -484,13 +497,14 @@ class IntentRecognizer:
         return params
     
     def _extract_job_filter_params(self, text: str) -> Dict[str, Any]:
-        """提取作业筛选参数"""
+        """提取作业筛选参数（支持 AC 接口新参数）"""
         params = {}
+        text_lower = text.lower()
         
         # 状态筛选
         for status_code, keywords in self.JOB_STATUS.items():
             for keyword in keywords:
-                if keyword in text.lower():
+                if keyword in text_lower:
                     params["status"] = status_code
                     break
         
@@ -508,6 +522,42 @@ class IntentRecognizer:
         days_match = re.search(r'最近[\s]*(\d+)[\s]*天', text)
         if days_match:
             params["days"] = int(days_match.group(1))
+        
+        # AC 接口新参数 - 分页
+        page_match = re.search(r'第[\s]*(\d+)[\s]*页', text)
+        if page_match:
+            params["page"] = int(page_match.group(1))
+        
+        size_match = re.search(r'每页[\s]*(\d+)[\s]*条', text)
+        if size_match:
+            params["size"] = int(size_match.group(1))
+        
+        # AC 接口新参数 - 区域ID
+        cluster_id_match = re.search(r'区域[IDSid]*[\s]*[:：]?[\s]*([\w-]+)', text)
+        if cluster_id_match:
+            params["cluster_id"] = cluster_id_match.group(1)
+        
+        # AC 接口新参数 - 展示组所有成员作业
+        if any(k in text for k in ["展示组作业", "显示组作业", "组作业", "show group"]):
+            params["show_group_jobs"] = "true"
+        
+        # AC 接口新参数 - 返回所有字段
+        if any(k in text for k in ["所有字段", "全部字段", "详细信息", "all data"]):
+            params["show_all_data"] = True
+        
+        # AC 接口新参数 - 用户名筛选
+        user_match = re.search(r'用户[\s]*[:：]?[\s]*([\w-]+)', text)
+        if user_match:
+            params["cluster_user_name"] = user_match.group(1)
+        
+        # 时间范围 - 支持格式: 2024-01-01 或 2024-01-01 00:00:00
+        start_time_match = re.search(r'开始时间[\s]*[:：]?[\s]*([\d]{4}-[\d]{2}-[\d]{2}(?:[\s:]\d+){0,6})', text)
+        if start_time_match:
+            params["start_time"] = start_time_match.group(1).strip()
+        
+        end_time_match = re.search(r'结束时间[\s]*[:：]?[\s]*([\d]{4}-[\d]{2}-[\d]{2}(?:[\s:]\d+){0,6})', text)
+        if end_time_match:
+            params["end_time"] = end_time_match.group(1).strip()
         
         return params
 
@@ -636,7 +686,7 @@ def handle_cache_refresh(params=None) -> str:
 
 
 def handle_switch_cluster(cluster_name: str) -> str:
-    """处理切换数据中心"""
+    """处理切换区域"""
     if not cluster_name:
         return "错误：未指定区域"
     
@@ -679,6 +729,26 @@ def handle_job_list(params: Dict[str, Any]) -> str:
     if params.get("job_name"):
         cmd.extend(["--job-name", params["job_name"]])
     
+    # AC 接口新参数
+    if params.get("page"):
+        cmd.extend(["--page", str(params["page"])])
+    if params.get("size"):
+        cmd.extend(["--size", str(params["size"])])
+    if params.get("cluster_id"):
+        cmd.extend(["--cluster-id", params["cluster_id"]])
+    if params.get("show_group_jobs"):
+        cmd.extend(["--show-group-jobs", params["show_group_jobs"]])
+    if params.get("cluster_user_name"):
+        cmd.extend(["--cluster-user-name", params["cluster_user_name"]])
+    if params.get("show_all_data"):
+        cmd.append("--show-all-data")
+    if params.get("start_time"):
+        cmd.extend(["--start-time", params["start_time"]])
+    if params.get("end_time"):
+        cmd.extend(["--end-time", params["end_time"]])
+    if params.get("days"):
+        cmd.extend(["--days", str(params["days"])])
+    
     return run_subprocess(cmd, timeout=TIMEOUT_NORMAL)
 
 
@@ -697,6 +767,24 @@ def handle_job_history(params: Dict[str, Any]) -> str:
         cmd.extend(["--job-name", params["job_name"]])
     if params.get("days"):
         cmd.extend(["--days", str(params["days"])])
+    
+    # AC 接口新参数
+    if params.get("page"):
+        cmd.extend(["--page", str(params["page"])])
+    if params.get("size"):
+        cmd.extend(["--size", str(params["size"])])
+    if params.get("cluster_id"):
+        cmd.extend(["--cluster-id", params["cluster_id"]])
+    if params.get("show_group_jobs"):
+        cmd.extend(["--show-group-jobs", params["show_group_jobs"]])
+    if params.get("cluster_user_name"):
+        cmd.extend(["--cluster-user-name", params["cluster_user_name"]])
+    if params.get("show_all_data"):
+        cmd.append("--show-all-data")
+    if params.get("start_time"):
+        cmd.extend(["--start-time", params["start_time"]])
+    if params.get("end_time"):
+        cmd.extend(["--end-time", params["end_time"]])
     
     return run_subprocess(cmd, timeout=TIMEOUT_NORMAL)
 
@@ -963,7 +1051,7 @@ def print_help():
 {Colors.BOLD}1. 缓存管理{Colors.END}
    • 刷新缓存 / 初始化缓存
 
-{Colors.BOLD}2. 数据中心切换{Colors.END}
+{Colors.BOLD}2. 区域切换{Colors.END}
    • 切换到 [区域]
      可选: 昆山、山东、西安、四川、武汉、哈尔滨、分区一、分区二等
 
