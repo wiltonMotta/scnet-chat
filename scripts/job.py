@@ -803,12 +803,24 @@ class JobAPI:
         map_app_job_info['GAP_NODE_STRING'] = job_params.get('node_string', '')
         map_app_job_info['GAP_SUBMIT_TYPE'] = job_params.get('submit_type', 'cmd')
         map_app_job_info['GAP_JOB_NAME'] = job_params.get('job_name', default_job_name)
-        map_app_job_info['GAP_WORK_DIR'] = job_params.get('work_dir', '')
+        
+        # 工作目录
+        work_dir = job_params.get('work_dir', '')
+        map_app_job_info['GAP_WORK_DIR'] = work_dir
         map_app_job_info['GAP_QUEUE'] = job_params.get('queue', '')
         map_app_job_info['GAP_WALL_TIME'] = job_params.get('wall_time', '24:00:00')
         map_app_job_info['GAP_APPNAME'] = job_params.get('appname', 'BASE')
-        map_app_job_info['GAP_STD_OUT_FILE'] = job_params.get('std_out', '')
-        map_app_job_info['GAP_STD_ERR_FILE'] = job_params.get('std_err', '')
+        
+        # 标准输出和错误文件路径（如果未指定，自动生成）
+        std_out = job_params.get('std_out', '')
+        std_err = job_params.get('std_err', '')
+        if work_dir:
+            if not std_out:
+                std_out = f"{work_dir}/std.out.%j"
+            if not std_err:
+                std_err = f"{work_dir}/std.err.%j"
+        map_app_job_info['GAP_STD_OUT_FILE'] = std_out
+        map_app_job_info['GAP_STD_ERR_FILE'] = std_err
         
         # 可选参数
         if job_params.get('nproc'):
