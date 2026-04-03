@@ -40,56 +40,11 @@ from config import (
     ASYNC_CONCURRENCY_LIMIT
 )
 
+# 从 utils 导入通用功能
+from utils import Colors, print_header, print_section, print_item, print_success, print_warning, print_error, load_cache
+
 # SSL 上下文
 SSL_CONTEXT = ssl.create_default_context()
-
-
-class Colors:
-    """终端颜色代码"""
-    HEADER = '\033[95m'
-    BLUE = '\033[94m'
-    CYAN = '\033[96m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    BOLD = '\033[1m'
-    DIM = '\033[2m'  # 暗淡/灰色
-    UNDERLINE = '\033[4m'
-    END = '\033[0m'
-
-
-def print_header(text: str):
-    """打印标题"""
-    print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 60}{Colors.END}")
-    print(f"{Colors.BOLD}{Colors.CYAN} {text}{Colors.END}")
-    print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 60}{Colors.END}\n")
-
-
-def print_section(title: str):
-    """打印小节标题"""
-    print(f"\n{Colors.BOLD}{Colors.BLUE}▶ {title}{Colors.END}")
-    print(f"{Colors.BLUE}{'─' * 50}{Colors.END}")
-
-
-def print_item(label: str, value: str, indent: int = 0):
-    """打印键值对"""
-    prefix = "  " * indent
-    print(f"{prefix}{Colors.BOLD}{label}:{Colors.END} {value}")
-
-
-def print_success(text: str):
-    """打印成功信息"""
-    print(f"{Colors.GREEN}✓ {text}{Colors.END}")
-
-
-def print_warning(text: str):
-    """打印警告信息"""
-    print(f"{Colors.YELLOW}⚠ {text}{Colors.END}")
-
-
-def print_error(text: str):
-    """打印错误信息"""
-    print(f"{Colors.RED}✗ {text}{Colors.END}")
 
 
 def format_bytes(size_bytes: float) -> str:
@@ -106,107 +61,6 @@ def format_bytes(size_bytes: float) -> str:
         unit_index += 1
     
     return f"{size:.2f} {units[unit_index]}"
-
-
-def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
-    """
-    加载缓存文件
-    
-    Args:
-        auto_init: 缓存不存在或过期时是否自动初始化
-    
-    Returns:
-        缓存数据，如果加载失败则返回 None
-    """
-    cache_path = get_cache_path()
-    # 检查缓存文件是否存在
-    if not cache_path.exists():
-        print_warning(f"缓存文件不存在: {cache_path}")
-        
-        if auto_init:
-            print(f"{Colors.CYAN}正在自动初始化缓存...{Colors.END}")
-            if _refresh_cache():
-                # 重新加载缓存
-                try:
-                    with open(cache_path, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e:
-                    print_error(f"加载新缓存失败: {e}")
-                    return None
-            else:
-                print_error("自动初始化缓存失败")
-                return None
-        else:
-            print(f"\n请先运行缓存初始化命令:")
-            print(f"  python scripts/cache.py")
-            return None
-    
-    # 加载缓存文件
-    try:
-        with open(cache_path, 'r', encoding='utf-8') as f:
-            cache = json.load(f)
-    except json.JSONDecodeError as e:
-        print_error(f"缓存文件解析失败: {e}")
-        if auto_init:
-            print(f"{Colors.CYAN}正在自动刷新缓存...{Colors.END}")
-            if _refresh_cache():
-                # 重新加载缓存
-                try:
-                    with open(cache_path, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e2:
-                    print_error(f"加载新缓存失败: {e2}")
-                    return None
-            else:
-                print_error("自动刷新缓存失败")
-                return None
-        return None
-    except Exception as e:
-        print_error(f"读取缓存文件失败: {e}")
-        if auto_init:
-            print(f"{Colors.CYAN}正在自动刷新缓存...{Colors.END}")
-            if _refresh_cache():
-                # 重新加载缓存
-                try:
-                    with open(cache_path, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e2:
-                    print_error(f"加载新缓存失败: {e2}")
-                    return None
-            else:
-                print_error("自动刷新缓存失败")
-                return None
-        return None
-    
-    # 检查缓存是否过期（token 有效期通常为 12 小时）
-    meta = cache.get('_meta', {})
-    updated_at = meta.get('updated_at', 0)
-    current_time = int(time.time())
-    
-    if current_time - updated_at > CACHE_MAX_AGE:
-        print_warning(f"缓存已过期（上次更新: {datetime.fromtimestamp(updated_at).strftime('%Y-%m-%d %H:%M:%S')}）")
-        
-        if auto_init:
-            print(f"{Colors.CYAN}正在自动刷新缓存...{Colors.END}")
-            if _refresh_cache():
-                # 重新加载缓存
-                try:
-                    with open(cache_path, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e:
-                    print_error(f"加载新缓存失败: {e}")
-                    return None
-            else:
-                print_warning("自动刷新缓存失败，尝试使用现有缓存")
-                # 即使刷新失败，也返回现有缓存（可能还能用）
-                return cache
-        else:
-            print(f"\n请手动刷新缓存:")
-            print(f"  python scripts/cache.py")
-            # 返回过期缓存（可能还能用）
-            return cache
-    
-    return cache
 
 
 def _refresh_cache() -> bool:

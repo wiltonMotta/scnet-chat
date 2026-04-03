@@ -45,9 +45,16 @@ from typing import Dict, List, Any, Optional, Tuple
 # Windows 终端兼容处理
 import compat
 
+# 导入公共工具模块
+from utils import (
+    Colors, print_header, print_section, print_item,
+    print_success, print_warning, print_error, print_info,
+    load_cache, get_cached_cache_path
+)
+
 # 导入配置文件
 from config import (
-    CONFIG_PATH, CACHE_PATH, get_cache_path, CACHE_MAX_AGE,
+    CONFIG_PATH, CACHE_PATH, get_cache_path, get_cached_cache_path as _get_cached_cache_path,
     JobTimeout, DEFAULT_JOB_NNODE, DEFAULT_JOB_WALL_TIME,
     DEFAULT_JOB_APPNAME, DEFAULT_SUBMIT_TYPE
 )
@@ -87,155 +94,6 @@ JOB_STATUS_MAP = {
     'nodefail': 'statN',
     'rerun': 'statRQ',
 }
-
-
-class Colors:
-    """终端颜色代码"""
-    HEADER = '\033[95m'
-    BLUE = '\033[94m'
-    CYAN = '\033[96m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    BOLD = '\033[1m'
-    DIM = '\033[2m'
-    UNDERLINE = '\033[4m'
-    END = '\033[0m'
-
-
-def print_header(text: str):
-    """打印标题"""
-    print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
-    print(f"{Colors.BOLD}{Colors.CYAN} {text}{Colors.END}")
-    print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
-
-
-def print_section(title: str):
-    """打印小节标题"""
-    print(f"\n{Colors.BOLD}{Colors.BLUE}▶ {title}{Colors.END}")
-    print(f"{Colors.BLUE}{'─' * 60}{Colors.END}")
-
-
-def print_item(label: str, value: str, indent: int = 0):
-    """打印键值对"""
-    prefix = "  " * indent
-    print(f"{prefix}{Colors.BOLD}{label}:{Colors.END} {value}")
-
-
-def print_success(text: str):
-    """打印成功信息"""
-    print(f"{Colors.GREEN}✓ {text}{Colors.END}")
-
-
-def print_warning(text: str):
-    """打印警告信息"""
-    print(f"{Colors.YELLOW}⚠ {text}{Colors.END}")
-
-
-def print_error(text: str):
-    """打印错误信息"""
-    print(f"{Colors.RED}✗ {text}{Colors.END}")
-
-
-def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
-    """
-    加载缓存文件
-    
-    Args:
-        auto_init: 缓存不存在或过期时是否自动初始化
-    
-    Returns:
-        缓存数据，如果加载失败则返回 None
-    """
-    cache_path = get_cache_path()
-    # 检查缓存文件是否存在
-    if not cache_path.exists():
-        print_warning(f"缓存文件不存在: {cache_path}")
-        
-        if auto_init:
-            print(f"{Colors.CYAN}正在自动初始化缓存...{Colors.END}")
-            if _refresh_cache():
-                # 重新加载缓存
-                try:
-                    with open(cache_path, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e:
-                    print_error(f"加载新缓存失败: {e}")
-                    return None
-            else:
-                print_error("自动初始化缓存失败")
-                return None
-        else:
-            print(f"\n请先运行缓存初始化命令:")
-            print(f"  python scripts/cache.py")
-            return None
-    
-    # 加载缓存文件
-    try:
-        with open(cache_path, 'r', encoding='utf-8') as f:
-            cache = json.load(f)
-    except json.JSONDecodeError as e:
-        print_error(f"缓存文件解析失败: {e}")
-        if auto_init:
-            print(f"{Colors.CYAN}正在自动刷新缓存...{Colors.END}")
-            if _refresh_cache():
-                # 重新加载缓存
-                try:
-                    with open(cache_path, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e2:
-                    print_error(f"加载新缓存失败: {e2}")
-                    return None
-            else:
-                print_error("自动刷新缓存失败")
-                return None
-        return None
-    except Exception as e:
-        print_error(f"读取缓存文件失败: {e}")
-        if auto_init:
-            print(f"{Colors.CYAN}正在自动刷新缓存...{Colors.END}")
-            if _refresh_cache():
-                # 重新加载缓存
-                try:
-                    with open(cache_path, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e2:
-                    print_error(f"加载新缓存失败: {e2}")
-                    return None
-            else:
-                print_error("自动刷新缓存失败")
-                return None
-        return None
-    
-    # 检查缓存是否过期（token 有效期通常为 12 小时）
-    meta = cache.get('_meta', {})
-    updated_at = meta.get('updated_at', 0)
-    current_time = int(time.time())
-    
-    if current_time - updated_at > CACHE_MAX_AGE:
-        print_warning(f"缓存已过期（上次更新: {datetime.fromtimestamp(updated_at).strftime('%Y-%m-%d %H:%M:%S')}）")
-        
-        if auto_init:
-            print(f"{Colors.CYAN}正在自动刷新缓存...{Colors.END}")
-            if _refresh_cache():
-                # 重新加载缓存
-                try:
-                    with open(cache_path, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e:
-                    print_error(f"加载新缓存失败: {e}")
-                    return None
-            else:
-                print_warning("自动刷新缓存失败，尝试使用现有缓存")
-                # 即使刷新失败，也返回现有缓存（可能还能用）
-                return cache
-        else:
-            print(f"\n请手动刷新缓存:")
-            print(f"  python scripts/cache.py")
-            # 返回过期缓存（可能还能用）
-            return cache
-    
-    return cache
 
 
 def _refresh_cache() -> bool:
@@ -520,12 +378,13 @@ class JobAPI:
             return None, 0, "AC 认证 token 不可用"
         
         # 构建请求体参数
+        # 注意：AC API 使用驼峰命名法
         body_params: Dict[str, Any] = {
             'page': params.get('page', 1),
             'size': params.get('size', 10),
             'clusterId': params.get('cluster_id', ''),
             'queue': params.get('queue', ''),
-            'jobstate': params.get('status', ''),
+            'jobState': params.get('status', ''),  # 驼峰命名，与API返回字段一致
             'showGroupJobs': params.get('show_group_jobs', ''),
             'clusterUserName': params.get('cluster_user_name', ''),
             'showAllData': params.get('show_all_data', False)
@@ -663,7 +522,7 @@ class JobAPI:
             'size': params.get('size', 10),
             'clusterId': params.get('cluster_id', ''),
             'queue': params.get('queue', ''),
-            'jobstate': params.get('status', ''),
+            'jobState': params.get('status', ''),  # 驼峰命名，与API返回字段一致
             'showGroupJobs': params.get('show_group_jobs', ''),
             'clusterUserName': params.get('cluster_user_name', ''),
             'showAllData': params.get('show_all_data', False)
@@ -933,6 +792,10 @@ def display_query_params(api: JobAPI, params: Dict[str, Any], is_history: bool =
         print_item("状态", params['status'])
     if params.get('cluster_id'):
         print_item("区域ID", params['cluster_id'])
+    if params.get('page') and params.get('page') != 1:
+        print_item("页码", params['page'])
+    if params.get('size') and params.get('size') != 10:
+        print_item("每页条数", params['size'])
     if params.get('days'):
         print_item("时间范围", f"最近 {params['days']} 天")
     elif params.get('start_time') and params.get('end_time'):
@@ -1484,8 +1347,10 @@ def main():
     # 筛选条件
     parser.add_argument('--job-name', type=str, help='作业名称（支持模糊匹配）')
     parser.add_argument('--queue', type=str, help='队列名称')
-    parser.add_argument('--status', type=str, choices=['running', 'queue', 'queued', 'hold', 'suspend', 'exit', 'completed', 'wait', 'waiting', 'other'],
-                       help='作业状态：running(运行), queue/queued(排队), hold(保留), suspend(挂起), exit(退出), completed(完成), wait/waiting(等待), other(其他)')
+    parser.add_argument('--status', type=str, 
+                       choices=['running', 'queue', 'queued', 'hold', 'suspend', 'exit', 'completed', 'wait', 'waiting', 'other',
+                               'statR', 'statQ', 'statH', 'statS', 'statE', 'statC', 'statW', 'statX', 'statDE', 'statD', 'statT', 'statN', 'statRQ'],
+                       help='作业状态：running/statR(运行), queue/statQ(排队), hold/statH(保留), suspend/statS(挂起), exit/statE(退出), completed/statC(完成), wait/statW(等待), other/statX(其他), statDE(取消), statD(失败), statT(超时), statN(节点异常), statRQ(重新运行)')
     parser.add_argument('--owner', type=str, help='作业所有者用户名（实时作业）')
     parser.add_argument('--user', type=str, help='用户名（历史作业）')
     
@@ -1598,7 +1463,14 @@ def main():
         'owner': args.owner or api.compute_user,
         'user': args.user or api.compute_user,
         'start_time': args.start_time,
-        'end_time': args.end_time
+        'end_time': args.end_time,
+        # AC接口分页参数
+        'page': args.page,
+        'size': args.size,
+        'cluster_id': args.cluster_id,
+        'show_group_jobs': args.show_group_jobs,
+        'cluster_user_name': args.cluster_user_name,
+        'show_all_data': args.show_all_data
     }
     
     # 只有当明确指定了 --days 参数时才加入（区分默认值）

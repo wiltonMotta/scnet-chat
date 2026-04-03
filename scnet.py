@@ -69,12 +69,31 @@ class Colors:
 class IntentRecognizer:
     """意图识别器 - 支持自然语言理解"""
     
-    # 作业状态映射
-    JOB_STATUS = {
-        "running": ["运行", "running", "执行中"],
-        "queue": ["排队", "queue", "等待"],
-        "completed": ["完成", "completed", "结束"],
-        "exit": ["退出", "exit", "失败"],
+    # 中文数字映射
+    CHINESE_NUMBERS = {
+        '一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
+        '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
+        '十一': 11, '十二': 12, '十三': 13, '十四': 14, '十五': 15,
+        '十六': 16, '十七': 17, '十八': 18, '十九': 19, '二十': 20,
+        '两': 2,  # 支持"两页"
+    }
+    
+    # 作业状态映射 - 支持中文状态到代码的转换（与 job.py 的 JOB_STATUS_MAP 对应）
+    # 格式: 中文关键词 -> AC API状态代码
+    JOB_STATUS_MAP = {
+        'statR': ['运行', 'running', '执行中', '运行中'],
+        'statQ': ['排队', 'queue', 'queued', '等待', '队列中'],
+        'statH': ['保留', 'hold', '挂起保留'],
+        'statS': ['挂起', 'suspend', '暂停', 'suspended'],
+        'statE': ['退出', 'exit', 'exited', '已退出'],
+        'statC': ['完成', 'completed', 'complete', '结束', '已完成', '成功'],
+        'statW': ['等待', 'wait', 'waiting'],
+        'statX': ['其他', 'other'],
+        'statDE': ['取消', 'cancelled', '已取消', 'deleted'],
+        'statD': ['失败', 'failed', '故障', 'error'],
+        'statT': ['超时', 'timeout', 'timedout', '已超时'],
+        'statN': ['节点异常', 'nodefail', '节点失败'],
+        'statRQ': ['重新运行', 'rerun', '重跑', '再次运行'],
     }
     
     def _load_clusters(self) -> Dict[str, str]:
@@ -502,20 +521,47 @@ class IntentRecognizer:
         
         return params
     
+    def _chinese_to_number(self, text: str) -> Optional[int]:
+        """将中文数字转换为阿拉伯数字"""
+        # 先尝试直接匹配阿拉伯数字
+        if text.isdigit():
+            return int(text)
+        # 尝试中文数字匹配
+        return self.CHINESE_NUMBERS.get(text)
+    
     def _extract_job_filter_params(self, text: str) -> Dict[str, Any]:
         """提取作业筛选参数（支持 AC 接口新参数）"""
         params = {}
         text_lower = text.lower()
         
-        # 状态筛选
-        for status_code, keywords in self.JOB_STATUS.items():
-            for keyword in keywords:
-                if keyword in text_lower:
+        # 状态筛选 - 使用完整的 JOB_STATUS_MAP 映射
+        # 优先匹配 "作业状态为XXX" 或 "状态为XXX" 格式
+        status_pattern = r'(?:作业)?状态[\s]*为[\s]*([\u4e00-\u9fa5a-zA-Z]+)'
+        status_match = re.search(status_pattern, text)
+        if status_match:
+            status_text = status_match.group(1)
+            # 在 JOB_STATUS_MAP 中查找匹配的状态代码
+            for status_code, keywords in self.JOB_STATUS_MAP.items():
+                if any(keyword in status_text or status_text in keyword for keyword in keywords):
                     params["status"] = status_code
+                    params["jobState"] = status_code  # 同时设置 jobState 用于历史作业查询
+                    break
+        
+        # 如果没有匹配到 "状态为XXX" 格式，尝试关键词匹配
+        if not params.get("status"):
+            for status_code, keywords in self.JOB_STATUS_MAP.items():
+                for keyword in keywords:
+                    if keyword in text:
+                        # 避免误匹配（如"等待"可能匹配到多个状态）
+                        # 优先匹配更具体的状态描述
+                        params["status"] = status_code
+                        params["jobState"] = status_code
+                        break
+                if params.get("status"):
                     break
         
         # 队列筛选
-        queue_match = re.search(r'队列[\s]+([\w]+)', text)
+        queue_match = re.search(r'队列[\s]*为?[\s]*([\w]+)', text)
         if queue_match:
             params["queue"] = queue_match.group(1)
         
@@ -524,15 +570,30 @@ class IntentRecognizer:
         if name_match:
             params["job_name"] = name_match.group(1)
         
-        # 最近N天
+        # 最近N天 - 支持中文数字
         days_match = re.search(r'最近[\s]*(\d+)[\s]*天', text)
         if days_match:
             params["days"] = int(days_match.group(1))
+        else:
+            # 尝试匹配中文数字
+            days_ch_match = re.search(r'最近[\s]*([一二两三四五六七八九十]+)[\s]*天', text)
+            if days_ch_match:
+                days_num = self._chinese_to_number(days_ch_match.group(1))
+                if days_num:
+                    params["days"] = days_num
         
         # AC 接口新参数 - 分页
+        # 支持 "第2页"、"第二页" 等格式
         page_match = re.search(r'第[\s]*(\d+)[\s]*页', text)
         if page_match:
             params["page"] = int(page_match.group(1))
+        else:
+            # 尝试匹配中文页码
+            page_ch_match = re.search(r'第[\s]*([一二两三四五六七八九十]+)[\s]*页', text)
+            if page_ch_match:
+                page_num = self._chinese_to_number(page_ch_match.group(1))
+                if page_num:
+                    params["page"] = page_num
         
         size_match = re.search(r'每页[\s]*(\d+)[\s]*条', text)
         if size_match:
@@ -564,6 +625,18 @@ class IntentRecognizer:
         end_time_match = re.search(r'结束时间[\s]*[:：]?[\s]*([\d]{4}-[\d]{2}-[\d]{2}(?:[\s:]\d+){0,6})', text)
         if end_time_match:
             params["end_time"] = end_time_match.group(1).strip()
+        
+        # 支持 "从XXX到XXX" 格式的时间范围（用于历史作业查询）
+        # 格式: 从2026-04-01到2026-04-03 或 从 2026-04-01 到 2026-04-03
+        date_range_match = re.search(
+            r'从[\s]*([\d]{4}-[\d]{2}-[\d]{2})[\s]*到[\s]*([\d]{4}-[\d]{2}-[\d]{2})',
+            text
+        )
+        if date_range_match:
+            start_date = date_range_match.group(1)
+            end_date = date_range_match.group(2)
+            params["start_time"] = f"{start_date} 00:00:00"
+            params["end_time"] = f"{end_date} 23:59:59"
         
         return params
 

@@ -40,59 +40,14 @@ from config import (
     FileTimeout, CACHE_INITIALIZER_TIMEOUT
 )
 
+# 从 utils 导入通用功能
+from utils import Colors, print_header, print_section, print_item, print_success, print_warning, print_error, load_cache
+
 # SSL 上下文
 SSL_CONTEXT = ssl.create_default_context()
 
 
-class Colors:
-    """终端颜色代码"""
-    HEADER = '\033[95m'
-    BLUE = '\033[94m'
-    CYAN = '\033[96m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    BOLD = '\033[1m'
-    DIM = '\033[2m'
-    UNDERLINE = '\033[4m'
-    END = '\033[0m'
-
-
-def print_header(text: str):
-    """打印标题"""
-    print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
-    print(f"{Colors.BOLD}{Colors.CYAN} {text}{Colors.END}")
-    print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
-
-
-def print_section(title: str):
-    """打印小节标题"""
-    print(f"\n{Colors.BOLD}{Colors.BLUE}▶ {title}{Colors.END}")
-    print(f"{Colors.BLUE}{'─' * 60}{Colors.END}")
-
-
-def print_item(label: str, value: str, indent: int = 0):
-    """打印键值对"""
-    prefix = "  " * indent
-    print(f"{prefix}{Colors.BOLD}{label}:{Colors.END} {value}")
-
-
-def print_success(text: str):
-    """打印成功信息"""
-    print(f"{Colors.GREEN}✓ {text}{Colors.END}")
-
-
-def print_warning(text: str):
-    """打印警告信息"""
-    print(f"{Colors.YELLOW}⚠ {text}{Colors.END}")
-
-
-def print_error(text: str):
-    """打印错误信息"""
-    print(f"{Colors.RED}✗ {text}{Colors.END}")
-
-
-def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
+def _unused_load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
     """
     加载缓存文件
     
