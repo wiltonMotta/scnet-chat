@@ -22,8 +22,14 @@ from typing import Dict, List, Any, Optional, Tuple
 
 # Windows 终端兼容处理（避免 GBK 编码下 UnicodeEncodeError 崩溃）
 if sys.platform == "win32":
-    # 启用 ANSI 颜色支持（Windows 10+）
-    os.system("")
+    # 启用 ANSI 颜色支持（Windows 10+）- 使用 ctypes 替代 os.system("")
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+    except Exception:
+        pass
+    
     # 强制 stdout/stderr 使用 utf-8，无法编码的字符用替换符代替
     try:
         import io

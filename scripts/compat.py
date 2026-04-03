@@ -7,7 +7,6 @@ Windows 终端兼容模块
 """
 
 import sys
-import os
 
 
 def setup_windows_console() -> None:
@@ -15,9 +14,11 @@ def setup_windows_console() -> None:
     if sys.platform != "win32":
         return
 
-    # 启用 Windows 10+ 的 ANSI 颜色支持
+    # 启用 Windows 10+ 的 ANSI 颜色支持 - 使用 ctypes 替代 os.system("")
     try:
-        os.system("")
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
     except Exception:
         pass
 
