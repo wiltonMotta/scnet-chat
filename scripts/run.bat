@@ -24,3 +24,4 @@ if %errorlevel% == 0 (
 
 echo 错误: 未找到 Python 解释器，请安装 Python 3 并确保 python 或 python3 命令可用 >&2
 exit /b 1
+REM Updated: %date%
