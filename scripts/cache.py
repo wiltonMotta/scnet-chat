@@ -12,7 +12,7 @@ SCNet Chat 缓存系统
 
 缓存文件位置:
     ~/.scnet-chat-cache.json
-    (路径可通过 config.CACHE_PATH 修改)
+    (路径可通过 config.get_cache_path() 获取)
 """
 
 import aiohttp
@@ -43,7 +43,7 @@ except ImportError:
 
 # 导入配置文件
 from config import (
-    CONFIG_PATH, CACHE_PATH,
+    CONFIG_PATH, CACHE_PATH, get_cache_path,
     EXPIRY_PARASTORS, EXPIRY_WALLTIME, CACHE_MAX_AGE,
     APITimeout, ASYNC_CONCURRENCY_LIMIT
 )
@@ -529,14 +529,14 @@ class CacheManager:
         Returns:
             缓存字典，如果缓存不存在或解析失败则返回 None
         """
-        if not CACHE_PATH.exists():
+        if not get_cache_path().exists():
             self.logger.info("缓存文件不存在，将创建新缓存")
             return None
         
         try:
-            with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+            with open(get_cache_path(), 'r', encoding='utf-8') as f:
                 cache = json.load(f)
-            self.logger.info(f"已加载缓存文件: {CACHE_PATH}")
+            self.logger.info(f"已加载缓存文件: {get_cache_path()}")
             return cache
         except json.JSONDecodeError as e:
             self.logger.error(f"缓存文件解析失败: {e}")
@@ -559,16 +559,16 @@ class CacheManager:
         """
         try:
             # 备份损坏的缓存文件
-            if CACHE_PATH.exists():
-                backup_path = CACHE_PATH.with_suffix('.json.bak')
+            if get_cache_path().exists():
+                backup_path = get_cache_path().with_suffix('.json.bak')
                 try:
-                    CACHE_PATH.rename(backup_path)
+                    get_cache_path().rename(backup_path)
                     self.logger.info(f"已备份损坏的缓存文件到: {backup_path}")
                 except Exception as e:
                     self.logger.warning(f"备份缓存文件失败: {e}")
                     # 如果备份失败，直接删除
                     try:
-                        CACHE_PATH.unlink()
+                        get_cache_path().unlink()
                     except Exception:
                         pass
             
@@ -592,9 +592,9 @@ class CacheManager:
     def save(self, cache: Dict[str, Any]):
         """保存缓存文件"""
         try:
-            with open(CACHE_PATH, 'w', encoding='utf-8') as f:
+            with open(get_cache_path(), 'w', encoding='utf-8') as f:
                 json.dump(cache, f, ensure_ascii=False, indent=2)
-            self.logger.success(f"缓存已保存到: {CACHE_PATH}")
+            self.logger.success(f"缓存已保存到: {get_cache_path()}")
         except Exception as e:
             self.logger.error(f"保存缓存文件失败: {e}")
             raise
@@ -633,8 +633,8 @@ class CacheInitializer:
         初始化缓存初始化器
         
         Args:
-            only_default: 是否只初始化默认计算中心的详细信息（默认为 True）
-            target_cluster_id: 指定要刷新的计算中心 ID（如果设置，优先于 only_default）
+            only_default: 是否只初始化默认区域的详细信息（默认为 True）
+            target_cluster_id: 指定要刷新的区域 ID（如果设置，优先于 only_default）
         """
         # 先创建 logger，配置加载后再更新 enabled 状态
         self.logger = Logger(enabled=False)
@@ -728,11 +728,11 @@ class CacheInitializer:
         cluster_name = cluster.get('clusterName')
         token = cluster.get('token')
         
-        self.logger.info(f"正在异步初始化计算中心: {cluster_name} (ID: {cluster_id})")
+        self.logger.info(f"正在异步初始化区域: {cluster_name} (ID: {cluster_id})")
         
-        # 特殊计算中心 ac 不调用某些接口
+        # 特殊区域 ac 不调用某些接口
         if cluster_name == 'ac':
-            self.logger.info(f"跳过特殊计算中心: {cluster_name}")
+            self.logger.info(f"跳过特殊区域: {cluster_name}")
             return
         
         async with aiohttp.ClientSession() as session:
@@ -838,7 +838,7 @@ class CacheInitializer:
             else:
                 self.logger.warning(f"[{cluster_name}] 无法获取 HPC 服务地址，跳过集群信息获取")
         
-        self.logger.success(f"计算中心 {cluster_name} 异步初始化完成")
+        self.logger.success(f"区域 {cluster_name} 异步初始化完成")
     
     def _init_cluster_details_sync(self, cluster: Dict[str, Any]):
         """同步方式初始化单个 cluster 的详细信息 (原始实现)"""
@@ -846,11 +846,11 @@ class CacheInitializer:
         cluster_name = cluster.get('clusterName')
         token = cluster.get('token')
         
-        self.logger.info(f"正在初始化计算中心: {cluster_name} (ID: {cluster_id}) [同步模式]")
+        self.logger.info(f"正在初始化区域: {cluster_name} (ID: {cluster_id}) [同步模式]")
         
-        # 特殊计算中心 ac 不调用某些接口
+        # 特殊区域 ac 不调用某些接口
         if cluster_name == 'ac':
-            self.logger.info(f"跳过特殊计算中心: {cluster_name}")
+            self.logger.info(f"跳过特殊区域: {cluster_name}")
             return
         
         # 1. 获取授权区域信息 (/ac/openapi/v2/center)
@@ -925,7 +925,7 @@ class CacheInitializer:
             else:
                 self.logger.warning(f"[{cluster_name}] 获取已用机时失败: {walltime_info.get('msg', walltime_info.get('message', '未知错误'))}")
         
-        self.logger.success(f"计算中心 {cluster_name} 初始化完成")
+        self.logger.success(f"区域 {cluster_name} 初始化完成")
     
     def _init_cluster_details(self, cluster: Dict[str, Any]):
         """
@@ -967,13 +967,13 @@ class CacheInitializer:
         for cluster in new_clusters:
             if cluster.get('clusterId') == old_default_id:
                 cluster['default'] = True
-                self.logger.info(f"保留默认计算中心: {cluster.get('clusterName')} (ID: {old_default_id})")
+                self.logger.info(f"保留默认区域: {cluster.get('clusterName')} (ID: {old_default_id})")
                 break
     
     def _init_all_clusters(self, clusters: List[Dict[str, Any]]):
-        """初始化所有计算中心的详细信息"""
-        print(f"\n▶ 初始化所有计算中心详细信息...")
-        self.logger.info("步骤 3/6: 初始化所有计算中心详细信息...")
+        """初始化所有区域的详细信息"""
+        print(f"\n▶ 初始化所有区域详细信息...")
+        self.logger.info("步骤 3/6: 初始化所有区域详细信息...")
         initialized_count = 0
         failed_count = 0
         
@@ -983,11 +983,11 @@ class CacheInitializer:
                 self._init_cluster_details(cluster)
                 initialized_count += 1
             except Exception as e:
-                self.logger.error(f"初始化计算中心 {cluster_name} 失败: {e}")
-                print(f"✗ 计算中心 {cluster_name} 初始化失败: {e}")
+                self.logger.error(f"初始化区域 {cluster_name} 失败: {e}")
+                print(f"✗ 区域 {cluster_name} 初始化失败: {e}")
                 failed_count += 1
         
-        print(f"✓ 计算中心详细信息初始化完成 ({initialized_count} 成功, {failed_count} 失败)")
+        print(f"✓ 区域详细信息初始化完成 ({initialized_count} 成功, {failed_count} 失败)")
     
     def run(self):
         """执行缓存初始化流程"""
@@ -1019,17 +1019,17 @@ class CacheInitializer:
         print(f"✓ 访问凭证获取成功")
         
         # 3. 初始化 clusters 基础信息
-        self.logger.info("步骤 2/6: 初始化计算中心基础信息...")
+        self.logger.info("步骤 2/6: 初始化区域基础信息...")
         clusters = self._init_clusters_base(tokens_response)
-        print(f"✓ 发现 {len(clusters)} 个计算中心")
+        print(f"✓ 发现 {len(clusters)} 个区域")
         
         # 4. 保留之前的 default 设置
         self._preserve_default_setting(clusters, old_cache)
         
         # 5. 初始化 cluster 的详细信息
-        # 根据模式决定初始化哪些计算中心
+        # 根据模式决定初始化哪些区域
         if self.target_cluster_id:
-            # 模式1: 刷新指定计算中心
+            # 模式1: 刷新指定区域
             target_cluster = None
             for cluster in clusters:
                 if cluster.get('clusterId') == self.target_cluster_id:
@@ -1038,27 +1038,27 @@ class CacheInitializer:
             
             if target_cluster:
                 cluster_name = target_cluster.get('clusterName', 'Unknown')
-                print(f"\n▶ 正在刷新计算中心: {cluster_name}")
-                self.logger.info(f"步骤 3/6: 刷新指定计算中心 {cluster_name}...")
+                print(f"\n▶ 正在刷新区域: {cluster_name}")
+                self.logger.info(f"步骤 3/6: 刷新指定区域 {cluster_name}...")
                 try:
                     self._init_cluster_details(target_cluster)
-                    print(f"✓ 计算中心 {cluster_name} 刷新完成")
+                    print(f"✓ 区域 {cluster_name} 刷新完成")
                 except Exception as e:
-                    self.logger.error(f"刷新计算中心 {cluster_name} 失败: {e}")
-                    print(f"✗ 计算中心 {cluster_name} 刷新失败: {e}")
+                    self.logger.error(f"刷新区域 {cluster_name} 失败: {e}")
+                    print(f"✗ 区域 {cluster_name} 刷新失败: {e}")
             else:
-                print(f"⚠ 未找到指定计算中心 (ID: {self.target_cluster_id})")
-                print("  将初始化所有计算中心")
+                print(f"⚠ 未找到指定区域 (ID: {self.target_cluster_id})")
+                print("  将初始化所有区域")
                 self._init_all_clusters(clusters)
         elif self.only_default:
-            # 模式2: 只初始化默认计算中心
+            # 模式2: 只初始化默认区域
             default_cluster = None
             for cluster in clusters:
                 if cluster.get('default') is True:
                     default_cluster = cluster
                     break
             
-            # 如果没有默认计算中心，使用第一个非 ac 的计算中心
+            # 如果没有默认区域，使用第一个非 ac 的区域
             if not default_cluster:
                 for cluster in clusters:
                     if cluster.get('clusterName') != 'ac':
@@ -1068,20 +1068,20 @@ class CacheInitializer:
             
             if default_cluster:
                 cluster_name = default_cluster.get('clusterName', 'Unknown')
-                print(f"\n▶ 仅初始化默认计算中心: {cluster_name}")
-                print(f"  (其他计算中心将在切换时自动刷新)")
-                self.logger.info(f"步骤 3/6: 初始化默认计算中心 {cluster_name}...")
+                print(f"\n▶ 仅初始化默认区域: {cluster_name}")
+                print(f"  (其他区域将在切换时自动刷新)")
+                self.logger.info(f"步骤 3/6: 初始化默认区域 {cluster_name}...")
                 try:
                     self._init_cluster_details(default_cluster)
-                    print(f"✓ 默认计算中心 {cluster_name} 初始化完成")
+                    print(f"✓ 默认区域 {cluster_name} 初始化完成")
                 except Exception as e:
-                    self.logger.error(f"初始化计算中心 {cluster_name} 失败: {e}")
-                    print(f"✗ 计算中心 {cluster_name} 初始化失败: {e}")
+                    self.logger.error(f"初始化区域 {cluster_name} 失败: {e}")
+                    print(f"✗ 区域 {cluster_name} 初始化失败: {e}")
             else:
-                print("⚠ 未找到默认计算中心，将初始化所有计算中心")
+                print("⚠ 未找到默认区域，将初始化所有区域")
                 self._init_all_clusters(clusters)
         else:
-            # 模式3: 初始化所有计算中心
+            # 模式3: 初始化所有区域
             self._init_all_clusters(clusters)
         
         # 6. 构建新缓存
@@ -1111,8 +1111,8 @@ class CacheInitializer:
         print("\n" + "=" * 60)
         print("缓存初始化完成")
         print("=" * 60)
-        print(f"\n缓存文件位置: {CACHE_PATH}")
-        print(f"\n计算中心列表:")
+        print(f"\n缓存文件位置: {get_cache_path()}")
+        print(f"\n区域列表:")
         for cluster in clusters:
             default_mark = " [默认]" if cluster.get('default') else ""
             print(f"  - {cluster.get('clusterName')} (ID: {cluster.get('clusterId')}){default_mark}")
@@ -1140,27 +1140,27 @@ class CacheInitializer:
         print("\n提示:")
         print("- 配额和机时数据将在 1 小时后过期")
         print("- 如需刷新缓存，请重新运行此脚本")
-        print(f"- 缓存文件权限建议: chmod 600 {CACHE_PATH}")
+        print(f"- 缓存文件权限建议: chmod 600 {get_cache_path()}")
         
         return True
 
 
 def switch_default_cluster(cluster_name: str) -> bool:
     """
-    切换默认计算中心
+    切换默认区域
     
     Args:
-        cluster_name: 计算中心名称，如 "华东四区【山东】"
+        cluster_name: 区域名称，如 "华东四区【山东】"
     
     Returns:
         bool: 是否成功
     """
     print("=" * 60)
-    print("切换默认计算中心")
+    print("切换默认区域")
     print("=" * 60)
     
     # 加载缓存
-    cache_path = CACHE_PATH
+    cache_path = get_cache_path()
     if not cache_path.exists():
         print(f"\n错误: 缓存文件不存在: {cache_path}")
         print("\n请先运行缓存初始化:")
@@ -1176,10 +1176,10 @@ def switch_default_cluster(cluster_name: str) -> bool:
     
     clusters = cache.get('clusters', [])
     if not clusters:
-        print("\n错误: 缓存中没有计算中心数据")
+        print("\n错误: 缓存中没有区域数据")
         return False
     
-    # 查找目标计算中心
+    # 查找目标区域
     target_found = False
     target_id = None
     
@@ -1192,8 +1192,8 @@ def switch_default_cluster(cluster_name: str) -> bool:
             cluster['default'] = False
     
     if not target_found:
-        print(f"\n错误: 未找到计算中心: {cluster_name}")
-        print("\n可用的计算中心:")
+        print(f"\n错误: 未找到区域: {cluster_name}")
+        print("\n可用的区域:")
         for cluster in clusters:
             name = cluster.get('clusterName', '')
             if name != 'ac':
@@ -1201,7 +1201,7 @@ def switch_default_cluster(cluster_name: str) -> bool:
                 print(f"  - {name}{current_mark}")
         return False
     
-    # 检查目标计算中心是否需要刷新（没有详细信息）
+    # 检查目标区域是否需要刷新（没有详细信息）
     target_cluster = None
     for cluster in clusters:
         if cluster.get('clusterId') == target_id:
@@ -1214,14 +1214,14 @@ def switch_default_cluster(cluster_name: str) -> bool:
         has_details = any(key in target_cluster for key in ['hpcUrls', 'aiUrls', 'efileUrls', 'clusterUserInfo'])
         if not has_details:
             needs_refresh = True
-            print(f"\n▶ 计算中心 {cluster_name} 详细信息未加载，正在刷新...")
+            print(f"\n▶ 区域 {cluster_name} 详细信息未加载，正在刷新...")
     
     if needs_refresh and target_cluster:
         try:
-            # 仅刷新目标计算中心的详细信息，保留其他计算中心的数据
-            print(f"\n▶ 正在刷新计算中心 {cluster_name} 的详细信息...")
+            # 仅刷新目标区域的详细信息，保留其他区域的数据
+            print(f"\n▶ 正在刷新区域 {cluster_name} 的详细信息...")
             
-            # 创建初始化器用于刷新指定计算中心
+            # 创建初始化器用于刷新指定区域
             initializer = CacheInitializer(target_cluster_id=target_id)
             
             # 获取访问凭证（token可能已过期）
@@ -1230,20 +1230,20 @@ def switch_default_cluster(cluster_name: str) -> bool:
             is_success = (code == 200 or code == '0' or code == 0)
             
             if is_success and 'data' in tokens_response:
-                # 更新目标计算中心的 token
+                # 更新目标区域的 token
                 data = tokens_response.get('data', [])
                 for item in data:
                     if item.get('clusterId') == target_id:
                         target_cluster['token'] = item.get('token')
                         break
                 
-                # 初始化目标计算中心的详细信息
+                # 初始化目标区域的详细信息
                 initializer._init_cluster_details(target_cluster)
-                print(f"✓ 计算中心 {cluster_name} 刷新完成")
+                print(f"✓ 区域 {cluster_name} 刷新完成")
             else:
                 print(f"⚠ 获取访问凭证失败，将使用现有数据")
         except Exception as e:
-            print(f"⚠ 刷新计算中心失败: {e}")
+            print(f"⚠ 刷新区域失败: {e}")
             print(f"  将使用现有数据")
     
     # 保存缓存
@@ -1254,10 +1254,10 @@ def switch_default_cluster(cluster_name: str) -> bool:
         with open(cache_path, 'w', encoding='utf-8') as f:
             json.dump(cache, f, ensure_ascii=False, indent=2)
         
-        print(f"\n✓ 成功切换默认计算中心为: {cluster_name}")
-        print(f"  计算中心 ID: {target_id}")
+        print(f"\n✓ 成功切换默认区域为: {cluster_name}")
+        print(f"  区域 ID: {target_id}")
         
-        print("\n计算中心列表:")
+        print("\n区域列表:")
         for cluster in clusters:
             name = cluster.get('clusterName', '')
             default_mark = " [默认]" if cluster.get('default') else ""
@@ -1280,10 +1280,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python scripts/cache.py                    # 初始化默认计算中心缓存（快速）
-  python scripts/cache.py --all              # 初始化所有计算中心缓存（完整）
-  python scripts/cache.py --switch "华东四区【山东】"  # 切换默认计算中心
-  python scripts/cache.py --list             # 列出所有计算中心
+  python scripts/cache.py                    # 初始化默认区域缓存（快速）
+  python scripts/cache.py --all              # 初始化所有区域缓存（完整）
+  python scripts/cache.py --switch "华东四区【山东】"  # 切换默认区域
+  python scripts/cache.py --list             # 列出所有区域
         """
     )
     
@@ -1291,24 +1291,24 @@ def main():
         '--switch',
         metavar='NAME',
         type=str,
-        help='切换默认计算中心，指定计算中心名称'
+        help='切换默认区域，指定区域名称'
     )
     
     parser.add_argument(
         '--list',
         action='store_true',
-        help='列出所有可用的计算中心'
+        help='列出所有可用的区域'
     )
     
     parser.add_argument(
         '--all',
         action='store_true',
-        help='初始化所有计算中心的详细信息（默认只初始化默认计算中心）'
+        help='初始化所有区域的详细信息（默认只初始化默认区域）'
     )
     
     args = parser.parse_args()
     
-    # 处理切换默认计算中心
+    # 处理切换默认区域
     if args.switch:
         try:
             success = switch_default_cluster(args.switch)
@@ -1320,10 +1320,10 @@ def main():
             print(f"\n错误: {e}")
             exit(1)
     
-    # 处理列出计算中心
+    # 处理列出区域
     if args.list:
         try:
-            cache_path = CACHE_PATH
+            cache_path = get_cache_path()
             if not cache_path.exists():
                 print(f"错误: 缓存文件不存在: {cache_path}")
                 print("\n请先运行缓存初始化:")
@@ -1336,7 +1336,7 @@ def main():
             clusters = cache.get('clusters', [])
             
             print("=" * 60)
-            print("计算中心列表")
+            print("区域列表")
             print("=" * 60)
             
             for cluster in clusters:
@@ -1346,8 +1346,6 @@ def main():
                 if name != 'ac':
                     print(f"  - {name} (ID: {cid}){default_mark}")
             
-            print("\n提示: 使用 --switch 参数切换默认计算中心")
-            print("  例如: python scripts/cache.py --switch \"华东四区【山东】\"")
             exit(0)
             
         except Exception as e:
@@ -1356,7 +1354,7 @@ def main():
     
     # 默认：运行缓存初始化
     try:
-        # 根据 --all 参数决定是初始化所有计算中心还是仅默认计算中心
+        # 根据 --all 参数决定是初始化所有区域还是仅默认区域
         initializer = CacheInitializer(only_default=not args.all)
         success = initializer.run()
         exit(0 if success else 1)

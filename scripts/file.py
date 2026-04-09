@@ -36,63 +36,18 @@ import compat
 
 # 导入配置文件
 from config import (
-    CONFIG_PATH, CACHE_PATH, CACHE_MAX_AGE,
+    CONFIG_PATH, CACHE_PATH, get_cache_path, CACHE_MAX_AGE,
     FileTimeout, CACHE_INITIALIZER_TIMEOUT
 )
+
+# 从 utils 导入通用功能
+from utils import Colors, print_header, print_section, print_item, print_success, print_warning, print_error, load_cache
 
 # SSL 上下文
 SSL_CONTEXT = ssl.create_default_context()
 
 
-class Colors:
-    """终端颜色代码"""
-    HEADER = '\033[95m'
-    BLUE = '\033[94m'
-    CYAN = '\033[96m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    BOLD = '\033[1m'
-    DIM = '\033[2m'
-    UNDERLINE = '\033[4m'
-    END = '\033[0m'
-
-
-def print_header(text: str):
-    """打印标题"""
-    print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
-    print(f"{Colors.BOLD}{Colors.CYAN} {text}{Colors.END}")
-    print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
-
-
-def print_section(title: str):
-    """打印小节标题"""
-    print(f"\n{Colors.BOLD}{Colors.BLUE}▶ {title}{Colors.END}")
-    print(f"{Colors.BLUE}{'─' * 60}{Colors.END}")
-
-
-def print_item(label: str, value: str, indent: int = 0):
-    """打印键值对"""
-    prefix = "  " * indent
-    print(f"{prefix}{Colors.BOLD}{label}:{Colors.END} {value}")
-
-
-def print_success(text: str):
-    """打印成功信息"""
-    print(f"{Colors.GREEN}✓ {text}{Colors.END}")
-
-
-def print_warning(text: str):
-    """打印警告信息"""
-    print(f"{Colors.YELLOW}⚠ {text}{Colors.END}")
-
-
-def print_error(text: str):
-    """打印错误信息"""
-    print(f"{Colors.RED}✗ {text}{Colors.END}")
-
-
-def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
+def _unused_load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
     """
     加载缓存文件
     
@@ -102,16 +57,17 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
     Returns:
         缓存数据，如果加载失败则返回 None
     """
+    cache_path = get_cache_path()
     # 检查缓存文件是否存在
-    if not CACHE_PATH.exists():
-        print_warning(f"缓存文件不存在: {CACHE_PATH}")
+    if not cache_path.exists():
+        print_warning(f"缓存文件不存在: {cache_path}")
         
         if auto_init:
             print(f"{Colors.CYAN}正在自动初始化缓存...{Colors.END}")
             if _refresh_cache():
                 # 重新加载缓存
                 try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e:
                     print_error(f"加载新缓存失败: {e}")
@@ -126,7 +82,7 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
     
     # 加载缓存文件
     try:
-        with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+        with open(cache_path, 'r', encoding='utf-8') as f:
             cache = json.load(f)
     except json.JSONDecodeError as e:
         print_error(f"缓存文件解析失败: {e}")
@@ -135,7 +91,7 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
             if _refresh_cache():
                 # 重新加载缓存
                 try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e2:
                     print_error(f"加载新缓存失败: {e2}")
@@ -151,7 +107,7 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
             if _refresh_cache():
                 # 重新加载缓存
                 try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e2:
                     print_error(f"加载新缓存失败: {e2}")
@@ -174,7 +130,7 @@ def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
             if _refresh_cache():
                 # 重新加载缓存
                 try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
                         return json.load(f)
                 except Exception as e:
                     print_error(f"加载新缓存失败: {e}")
@@ -235,7 +191,7 @@ def _refresh_cache() -> bool:
 
 
 def get_default_cluster(cache: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """获取默认计算中心"""
+    """获取默认区域"""
     clusters = cache.get('clusters', [])
     for cluster in clusters:
         if cluster.get('default') is True:
@@ -373,6 +329,40 @@ class FileAPI:
         else:
             return False, result.get("msg", "检查失败")
     
+    def check_is_directory(self, path: str) -> Tuple[bool, str]:
+        """
+        检查路径是否是已存在的目录
+        POST /efile/openapi/v2/file/exist
+        
+        Returns: (is_directory, error_message)
+        """
+        if not self.efile_url:
+            return False, "文件服务不可用"
+        
+        url = f"{self.efile_url}/openapi/v2/file/exist"
+        headers = {"token": self.token, "Content-Type": "application/x-www-form-urlencoded"}
+        payload = {"path": path}
+        data = urllib.parse.urlencode(payload).encode('utf-8')
+        
+        result = self._make_request(url, headers, data=data, method='POST', timeout=self.TIMEOUT_CHECK_EXISTS)
+        
+        if result and result.get("code") == "0":
+            data = result.get("data", {})
+            if data.get("exist", False):
+                # 检查是否有 dir 字段
+                if "dir" in data:
+                    return data.get("dir", False), ""
+                else:
+                    # API 没有返回 dir 字段，使用 list_files 来判断
+                    files, total, error = self.list_files(path, limit=1)
+                    if not error and total >= 0:
+                        # 如果能列出文件，说明是目录
+                        return True, ""
+                    return False, ""
+            return False, ""
+        else:
+            return False, result.get("msg", "检查失败")
+    
     def create_folder(self, path: str, create_parents: bool = True) -> Tuple[bool, str]:
         """
         创建文件夹
@@ -480,13 +470,18 @@ class FileAPI:
     
     def download_file(self, remote_path: str, local_path: str) -> Tuple[bool, str]:
         """
-        下载文件
+        下载文件或文件夹
         GET /efile/openapi/v2/file/download
+        
+        如果下载的是文件夹，会自动压缩为zip文件
         
         Returns: (success, message)
         """
         if not self.efile_url:
             return False, "文件服务不可用"
+        
+        # 检查远程路径是否是文件夹
+        is_dir, _ = self.check_is_directory(remote_path)
         
         url = f"{self.efile_url}/openapi/v2/file/download"
         headers = {"token": self.token, "Content-Type": "application/json"}
@@ -498,24 +493,192 @@ class FileAPI:
             
             req = urllib.request.Request(full_url, headers=headers, method='GET')
             
-            # 处理目标路径：如果是目录，使用远程文件名
+            # 处理目标路径
             target_path = local_path
-            if os.path.isdir(local_path):
-                # 从远程路径提取文件名
-                remote_filename = os.path.basename(remote_path)
-                target_path = os.path.join(local_path, remote_filename)
+            remote_filename = os.path.basename(remote_path)
+            
+            if is_dir:
+                # 如果是文件夹，下载为zip文件
+                # 检查用户是否指定了.zip后缀
+                if local_path.endswith('.zip'):
+                    # 用户明确指定了zip文件名
+                    zip_path = local_path
+                    # 临时下载目录
+                    temp_dir = local_path[:-4] + '_temp'
+                elif os.path.isdir(local_path):
+                    # 目标是目录，使用远程文件夹名.zip
+                    zip_path = os.path.join(local_path, remote_filename + '.zip')
+                    temp_dir = os.path.join(local_path, remote_filename)
+                else:
+                    # 目标是文件路径，添加.zip后缀
+                    zip_path = local_path + '.zip'
+                    temp_dir = local_path
+                
+                # 确保本地目录存在
+                os.makedirs(os.path.dirname(zip_path) or '.', exist_ok=True)
+                
+                # 创建临时目录用于存放下载的文件
+                os.makedirs(temp_dir, exist_ok=True)
+                
+                # 下载文件夹内容
+                success, msg = self._download_folder_contents(remote_path, temp_dir)
+                if not success:
+                    import shutil
+                    shutil.rmtree(temp_dir, ignore_errors=True)
+                    return False, f"下载文件夹内容失败: {msg}"
+                
+                # 压缩为zip，保留外层文件夹名
+                # 获取外层文件夹名（如 apprepo）
+                outer_folder_name = os.path.basename(temp_dir)
+                import zipfile
+                with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for root, dirs, files in os.walk(temp_dir):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            # 计算相对于 temp_dir 父目录的相对路径，保留外层文件夹
+                            rel_path = os.path.relpath(file_path, os.path.dirname(temp_dir))
+                            zipf.write(file_path, rel_path)
+                
+                # 删除临时目录
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                
+                return True, f"下载成功: {zip_path}"
+            else:
+                # 普通文件下载
+                if os.path.isdir(local_path):
+                    # 从远程路径提取文件名
+                    target_path = os.path.join(local_path, remote_filename)
+                
+                # 确保本地目录存在
+                os.makedirs(os.path.dirname(target_path) or '.', exist_ok=True)
+                
+                with urllib.request.urlopen(req, context=SSL_CONTEXT, timeout=self.TIMEOUT_DOWNLOAD_FILE) as response:
+                    with open(target_path, 'wb') as f:
+                        while True:
+                            chunk = response.read(8192)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                return True, f"下载成功: {target_path}"
+        except Exception as e:
+            return False, f"下载失败: {str(e)}"
+    
+    def _download_folder_contents(self, remote_path: str, local_dir: str) -> Tuple[bool, str]:
+        """递归下载文件夹内容（内部方法，不压缩子目录）"""
+        try:
+            # 列出远程目录内容
+            files, total, error = self.list_files(remote_path, limit=1000)
+            if error:
+                return False, error
+            
+            for file_info in files:
+                name = file_info.get('name', '')
+                if not name or name in ['.', '..']:
+                    continue
+                
+                remote_file_path = remote_path.rstrip('/') + '/' + name
+                local_file_path = os.path.join(local_dir, name)
+                
+                if file_info.get('isDir', False) or file_info.get('isDirectory', False):
+                    # 是子目录，递归下载
+                    os.makedirs(local_file_path, exist_ok=True)
+                    success, msg = self._download_folder_contents(remote_file_path, local_file_path)
+                    if not success:
+                        return False, msg
+                else:
+                    # 是文件，直接下载（不通过 download_file 避免二次压缩）
+                    success, msg = self._download_single_file(remote_file_path, local_file_path)
+                    if not success:
+                        return False, msg
+            
+            return True, "下载完成"
+        except Exception as e:
+            return False, str(e)
+    
+    def _download_single_file(self, remote_path: str, local_path: str) -> Tuple[bool, str]:
+        """
+        下载单个文件（支持断点续传）
+        
+        Args:
+            remote_path: 远程文件路径
+            local_path: 本地保存路径
+        
+        Returns:
+            (success, message)
+        """
+        try:
+            url = f"{self.efile_url}/openapi/v2/file/download"
+            headers = {"token": self.token, "Content-Type": "application/json"}
+            params = {"path": remote_path}
+            
+            query_string = urllib.parse.urlencode(params)
+            full_url = f"{url}?{query_string}"
             
             # 确保本地目录存在
-            os.makedirs(os.path.dirname(target_path) or '.', exist_ok=True)
+            os.makedirs(os.path.dirname(local_path) or '.', exist_ok=True)
+            
+            # 断点续传：检查本地是否已存在部分下载的文件
+            downloaded_size = 0
+            if os.path.exists(local_path):
+                downloaded_size = os.path.getsize(local_path)
+            
+            # 创建请求
+            req_headers = headers.copy()
+            if downloaded_size > 0:
+                # 添加 Range 头，从已下载位置继续
+                req_headers["Range"] = f"bytes={downloaded_size}-"
+            
+            req = urllib.request.Request(full_url, headers=req_headers, method='GET')
+            
+            # 根据是否断点续传选择文件打开模式
+            file_mode = 'ab' if downloaded_size > 0 else 'wb'
             
             with urllib.request.urlopen(req, context=SSL_CONTEXT, timeout=self.TIMEOUT_DOWNLOAD_FILE) as response:
-                with open(target_path, 'wb') as f:
+                # 获取响应状态
+                status_code = response.getcode()
+                
+                # 检查是否支持断点续传
+                if downloaded_size > 0:
+                    if status_code == 206:  # Partial Content
+                        print(f"  [断点续传] 从 {downloaded_size} 字节处继续下载...")
+                    elif status_code == 200:
+                        # 服务器不支持断点续传，重新下载
+                        print(f"  [重新下载] 服务器不支持断点续传，从头开始下载...")
+                        downloaded_size = 0
+                        file_mode = 'wb'
+                    else:
+                        return False, f"下载失败: HTTP {status_code}"
+                
+                # 获取文件总大小（如果服务器提供）
+                total_size = None
+                content_range = response.headers.get('Content-Range')
+                if content_range:
+                    # Content-Range: bytes 1000-2000/3000
+                    try:
+                        total_size = int(content_range.split('/')[-1])
+                    except:
+                        pass
+                
+                # 下载文件
+                with open(local_path, file_mode) as f:
+                    downloaded = downloaded_size
                     while True:
                         chunk = response.read(8192)
                         if not chunk:
                             break
                         f.write(chunk)
-                return True, f"下载成功: {target_path}"
+                        downloaded += len(chunk)
+                        
+                        # 显示进度（如果知道总大小）
+                        if total_size and total_size > 0:
+                            percent = min(100, int(downloaded * 100 / total_size))
+                            print(f"  下载进度: {percent}% ({downloaded}/{total_size} 字节)", end='\r')
+                
+                if total_size:
+                    print()  # 换行
+                
+                return True, f"下载成功: {local_path}"
         except Exception as e:
             return False, f"下载失败: {str(e)}"
     
@@ -567,10 +730,50 @@ class FileAPI:
         复制文件
         POST /efile/openapi/v2/file/copy
         
+        Args:
+            source_paths: 源文件路径列表
+            target_path: 目标路径（可以是目录或完整文件路径）
+            cover: 覆盖策略
+        
         Returns: (success, message)
         """
         if not self.efile_url:
             return False, "文件服务不可用"
+        
+        if not source_paths:
+            return False, "请指定源文件"
+        
+        # 获取源文件名
+        src_file = source_paths[0]
+        src_name = src_file.split('/')[-1] if '/' in src_file else src_file
+        
+        # 检查目标路径是否是已存在的目录
+        is_dir, error = self.check_is_directory(target_path)
+        
+        if is_dir:
+            # 目标是目录，复制到该目录下保持原名
+            target_dir = target_path.rstrip('/') + '/'
+        else:
+            # 目标不是目录，可能是文件路径
+            # 提取目标目录
+            if '/' in target_path:
+                target_dir = '/'.join(target_path.rstrip('/').split('/')[:-1]) or '/'
+                target_name = target_path.split('/')[-1]
+            else:
+                target_dir = '/'
+                target_name = target_path
+            
+            # 检查目标目录是否存在
+            is_target_dir_exists, _ = self.check_is_directory(target_dir)
+            if not is_target_dir_exists:
+                # 尝试创建目录
+                success, msg = self.create_folder(target_dir)
+                if not success:
+                    return False, f"目标目录不存在且无法创建: {msg}"
+            
+            # 如果目标文件名与源文件名不同，API 不支持直接重命名
+            # 先复制到目标目录，保持原名
+            target_path = target_dir.rstrip('/') + '/'
         
         url = f"{self.efile_url}/openapi/v2/file/copy"
         headers = {"token": self.token, "Content-Type": "application/x-www-form-urlencoded"}
@@ -711,17 +914,17 @@ def main():
     if not cache:
         sys.exit(1)
     
-    # 获取默认计算中心
+    # 获取默认区域
     cluster = get_default_cluster(cache)
     if not cluster:
-        print_error("未找到默认计算中心")
+        print_error("未找到默认区域")
         sys.exit(1)
     
     # 创建 API 客户端
     api = FileAPI(cluster)
     
     if not api.efile_url:
-        print_error("当前计算中心未配置文件服务")
+        print_error("当前区域未配置文件服务")
         sys.exit(1)
     
     # 打印标题
@@ -855,11 +1058,6 @@ def main():
             sys.exit(1)
         display_file_list(files, total, path)
     
-    # 底部提示
-    print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
-    print(f"  提示: 使用 {Colors.YELLOW}python scripts/cache.py --switch \"中心名称\"{Colors.END} 切换计算中心")
-    print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
-
 
 if __name__ == "__main__":
     main()

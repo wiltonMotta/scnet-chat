@@ -2,7 +2,7 @@
 """
 SCNet 用户信息查看工具
 
-从缓存中获取并显示当前计算中心的详细信息，以及其他可用计算中心列表。
+从缓存中获取并显示当前区域的详细信息，以及其他可用区域列表。
 支持动态查询作业统计信息。
 
 使用方法:
@@ -35,61 +35,16 @@ except ImportError:
 
 # 导入配置文件
 from config import (
-    CONFIG_PATH, CACHE_PATH, CACHE_MAX_AGE,
+    CONFIG_PATH, CACHE_PATH, get_cache_path, CACHE_MAX_AGE,
     ClusterTimeout, CACHE_INITIALIZER_TIMEOUT,
     ASYNC_CONCURRENCY_LIMIT
 )
 
+# 从 utils 导入通用功能
+from utils import Colors, print_header, print_section, print_item, print_success, print_warning, print_error, load_cache
+
 # SSL 上下文
 SSL_CONTEXT = ssl.create_default_context()
-
-
-class Colors:
-    """终端颜色代码"""
-    HEADER = '\033[95m'
-    BLUE = '\033[94m'
-    CYAN = '\033[96m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    BOLD = '\033[1m'
-    DIM = '\033[2m'  # 暗淡/灰色
-    UNDERLINE = '\033[4m'
-    END = '\033[0m'
-
-
-def print_header(text: str):
-    """打印标题"""
-    print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 60}{Colors.END}")
-    print(f"{Colors.BOLD}{Colors.CYAN} {text}{Colors.END}")
-    print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 60}{Colors.END}\n")
-
-
-def print_section(title: str):
-    """打印小节标题"""
-    print(f"\n{Colors.BOLD}{Colors.BLUE}▶ {title}{Colors.END}")
-    print(f"{Colors.BLUE}{'─' * 50}{Colors.END}")
-
-
-def print_item(label: str, value: str, indent: int = 0):
-    """打印键值对"""
-    prefix = "  " * indent
-    print(f"{prefix}{Colors.BOLD}{label}:{Colors.END} {value}")
-
-
-def print_success(text: str):
-    """打印成功信息"""
-    print(f"{Colors.GREEN}✓ {text}{Colors.END}")
-
-
-def print_warning(text: str):
-    """打印警告信息"""
-    print(f"{Colors.YELLOW}⚠ {text}{Colors.END}")
-
-
-def print_error(text: str):
-    """打印错误信息"""
-    print(f"{Colors.RED}✗ {text}{Colors.END}")
 
 
 def format_bytes(size_bytes: float) -> str:
@@ -106,106 +61,6 @@ def format_bytes(size_bytes: float) -> str:
         unit_index += 1
     
     return f"{size:.2f} {units[unit_index]}"
-
-
-def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
-    """
-    加载缓存文件
-    
-    Args:
-        auto_init: 缓存不存在或过期时是否自动初始化
-    
-    Returns:
-        缓存数据，如果加载失败则返回 None
-    """
-    # 检查缓存文件是否存在
-    if not CACHE_PATH.exists():
-        print_warning(f"缓存文件不存在: {CACHE_PATH}")
-        
-        if auto_init:
-            print(f"{Colors.CYAN}正在自动初始化缓存...{Colors.END}")
-            if _refresh_cache():
-                # 重新加载缓存
-                try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e:
-                    print_error(f"加载新缓存失败: {e}")
-                    return None
-            else:
-                print_error("自动初始化缓存失败")
-                return None
-        else:
-            print(f"\n请先运行缓存初始化命令:")
-            print(f"  python scripts/cache.py")
-            return None
-    
-    # 加载缓存文件
-    try:
-        with open(CACHE_PATH, 'r', encoding='utf-8') as f:
-            cache = json.load(f)
-    except json.JSONDecodeError as e:
-        print_error(f"缓存文件解析失败: {e}")
-        if auto_init:
-            print(f"{Colors.CYAN}正在自动刷新缓存...{Colors.END}")
-            if _refresh_cache():
-                # 重新加载缓存
-                try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e2:
-                    print_error(f"加载新缓存失败: {e2}")
-                    return None
-            else:
-                print_error("自动刷新缓存失败")
-                return None
-        return None
-    except Exception as e:
-        print_error(f"读取缓存文件失败: {e}")
-        if auto_init:
-            print(f"{Colors.CYAN}正在自动刷新缓存...{Colors.END}")
-            if _refresh_cache():
-                # 重新加载缓存
-                try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e2:
-                    print_error(f"加载新缓存失败: {e2}")
-                    return None
-            else:
-                print_error("自动刷新缓存失败")
-                return None
-        return None
-    
-    # 检查缓存是否过期（token 有效期通常为 12 小时）
-    meta = cache.get('_meta', {})
-    updated_at = meta.get('updated_at', 0)
-    current_time = int(time.time())
-    
-    if current_time - updated_at > CACHE_MAX_AGE:
-        print_warning(f"缓存已过期（上次更新: {datetime.fromtimestamp(updated_at).strftime('%Y-%m-%d %H:%M:%S')}）")
-        
-        if auto_init:
-            print(f"{Colors.CYAN}正在自动刷新缓存...{Colors.END}")
-            if _refresh_cache():
-                # 重新加载缓存
-                try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e:
-                    print_error(f"加载新缓存失败: {e}")
-                    return None
-            else:
-                print_warning("自动刷新缓存失败，尝试使用现有缓存")
-                # 即使刷新失败，也返回现有缓存（可能还能用）
-                return cache
-        else:
-            print(f"\n请手动刷新缓存:")
-            print(f"  python scripts/cache.py")
-            # 返回过期缓存（可能还能用）
-            return cache
-    
-    return cache
 
 
 def _refresh_cache() -> bool:
@@ -254,11 +109,18 @@ def _refresh_cache() -> bool:
 
 
 def get_default_cluster(clusters: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """获取默认计算中心"""
+    """获取默认区域"""
+    # 首先查找标记为默认的区域
     for cluster in clusters:
-        if cluster.get('default') is True:
+        if cluster.get('default') is True or cluster.get('isDefault') is True:
             return cluster
-    # 如果没有设置默认，返回第一个非 ac 的计算中心
+    
+    # 其次查找有完整配置（有 walltime 数据）的区域
+    for cluster in clusters:
+        if cluster.get('clusterName') != 'ac' and cluster.get('walltime') is not None:
+            return cluster
+    
+    # 最后返回第一个非 ac 的区域
     for cluster in clusters:
         if cluster.get('clusterName') != 'ac':
             return cluster
@@ -266,19 +128,19 @@ def get_default_cluster(clusters: List[Dict[str, Any]]) -> Optional[Dict[str, An
 
 
 def get_other_clusters(clusters: List[Dict[str, Any]], current_id: str) -> List[Dict[str, Any]]:
-    """获取其他计算中心（排除 ac 和当前计算中心）"""
+    """获取其他区域（排除 ac 和当前区域）"""
     others = []
     for cluster in clusters:
         name = cluster.get('clusterName', '')
         cid = cluster.get('clusterId', '')
-        # 排除 ac 和当前计算中心
+        # 排除 ac 和当前区域
         if name != 'ac' and cid != current_id:
             others.append(cluster)
     return others
 
 
 class ClusterAPI:
-    """计算中心 API 客户端 - 动态查询作业统计信息"""
+    """区域 API 客户端 - 动态查询作业统计信息"""
     
     # 从配置文件导入超时时间
     TIMEOUT_QUERY_JOB_STATE = ClusterTimeout.QUERY_JOB_STATE
@@ -417,7 +279,7 @@ class ClusterAPI:
 
 
 class AsyncClusterAPI:
-    """异步计算中心 API 客户端 - 并行查询作业统计信息"""
+    """异步区域 API 客户端 - 并行查询作业统计信息"""
     
     def __init__(self, cluster: Dict[str, Any]):
         self.cluster = cluster
@@ -877,7 +739,8 @@ def display_walltime(cluster: Dict[str, Any]):
     if walltime is None:
         return
     
-    print_section("⏱️  机时使用")
+    cluster_name = cluster.get('clusterName', '未知区域')
+    print_section(f"⏱️  {cluster_name}")
     
     hours = float(walltime) if walltime else 0
     
@@ -886,11 +749,11 @@ def display_walltime(cluster: Dict[str, Any]):
 
 
 def display_other_clusters(others: List[Dict[str, Any]]):
-    """显示其他计算中心"""
+    """显示其他区域"""
     if not others:
         return
     
-    print_section(f"📋 其他计算中心 ({len(others)}个)")
+    print_section(f"📋 其他区域 ({len(others)}个)")
     
     for i, cluster in enumerate(others, 1):
         name = cluster.get('clusterName', 'N/A')
@@ -930,13 +793,13 @@ def main():
     
     clusters = cache.get('clusters', [])
     if not clusters:
-        print_error("缓存中没有计算中心数据")
+        print_error("缓存中没有区域数据")
         sys.exit(1)
     
-    # 获取当前默认计算中心
+    # 获取当前默认区域
     current = get_default_cluster(clusters)
     if not current:
-        print_error("未找到默认计算中心")
+        print_error("未找到默认区域")
         sys.exit(1)
     
     # 根据参数显示不同信息
@@ -944,14 +807,22 @@ def main():
         # 显示作业统计信息
         display_dynamic_stats(current)
     elif args.walltime:
-        # 显示机时使用信息
-        display_walltime(current)
+        # 显示机时使用信息（显示所有有数据的区域）
+        has_walltime_data = False
+        for cluster in clusters:
+            if cluster.get('walltime') is not None and cluster.get('clusterName') != 'ac':
+                if not has_walltime_data:
+                    print_header("⏱️  机时使用情况")
+                    has_walltime_data = True
+                display_walltime(cluster)
+        if not has_walltime_data:
+            print_warning("暂无机时使用数据")
     else:
         # 默认显示完整用户信息
         # 打印主标题
         cluster_name = current.get('clusterName', 'N/A')
         cluster_id = current.get('clusterId', '')
-        print_header(f"当前计算中心: {cluster_name}")
+        print_header(f"当前区域: {cluster_name}")
         
         # 用户信息
         user_info = current.get('clusterUserInfo', {})
@@ -964,11 +835,5 @@ def main():
         # 集群信息
         display_cluster_info(current)
         
-        # 底部提示
-        print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 60}{Colors.END}")
-        print(f"  提示: 使用 {Colors.YELLOW}python scripts/cache.py{Colors.END} 刷新缓存")
-        print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 60}{Colors.END}\n")
-
-
 if __name__ == "__main__":
     main()

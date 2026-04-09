@@ -25,8 +25,8 @@ SCNet 作业管理工具
     python scripts/job.py --start-time "2024-01-01 00:00:00" --end-time "2024-01-31 23:59:59"
 
 注意：建议使用自然语言入口 scnet.py 进行作业提交，使用更方便：
-    python scnet.py "提交作业 sleep 100 --queue comp"
-    python scnet.py "提交作业帮助"
+    python scripts/scnet.py "提交作业 sleep 100 --queue comp"
+    python scripts/scnet.py "提交作业帮助"
 """
 
 import json
@@ -45,9 +45,16 @@ from typing import Dict, List, Any, Optional, Tuple
 # Windows 终端兼容处理
 import compat
 
+# 导入公共工具模块
+from utils import (
+    Colors, print_header, print_section, print_item,
+    print_success, print_warning, print_error, print_info,
+    load_cache, get_cached_cache_path
+)
+
 # 导入配置文件
 from config import (
-    CONFIG_PATH, CACHE_PATH, CACHE_MAX_AGE,
+    CONFIG_PATH, CACHE_PATH, get_cache_path, get_cached_cache_path as _get_cached_cache_path,
     JobTimeout, DEFAULT_JOB_NNODE, DEFAULT_JOB_WALL_TIME,
     DEFAULT_JOB_APPNAME, DEFAULT_SUBMIT_TYPE
 )
@@ -65,6 +72,11 @@ JOB_STATUS_MAP = {
     'statC': '完成',
     'statW': '等待',
     'statX': '其他',
+    'statDE': '取消',
+    'statD': '失败',
+    'statT': '超时',
+    'statN': '节点异常',
+    'statRQ': '重新运行',
     'running': 'statR',
     'queue': 'statQ',
     'queued': 'statQ',
@@ -75,156 +87,13 @@ JOB_STATUS_MAP = {
     'complete': 'statC',
     'wait': 'statW',
     'waiting': 'statW',
-    'other': 'statX'
+    'other': 'statX',
+    'cancelled': 'statDE',
+    'failed': 'statD',
+    'timeout': 'statT',
+    'nodefail': 'statN',
+    'rerun': 'statRQ',
 }
-
-
-class Colors:
-    """终端颜色代码"""
-    HEADER = '\033[95m'
-    BLUE = '\033[94m'
-    CYAN = '\033[96m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    BOLD = '\033[1m'
-    DIM = '\033[2m'
-    UNDERLINE = '\033[4m'
-    END = '\033[0m'
-
-
-def print_header(text: str):
-    """打印标题"""
-    print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
-    print(f"{Colors.BOLD}{Colors.CYAN} {text}{Colors.END}")
-    print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
-
-
-def print_section(title: str):
-    """打印小节标题"""
-    print(f"\n{Colors.BOLD}{Colors.BLUE}▶ {title}{Colors.END}")
-    print(f"{Colors.BLUE}{'─' * 60}{Colors.END}")
-
-
-def print_item(label: str, value: str, indent: int = 0):
-    """打印键值对"""
-    prefix = "  " * indent
-    print(f"{prefix}{Colors.BOLD}{label}:{Colors.END} {value}")
-
-
-def print_success(text: str):
-    """打印成功信息"""
-    print(f"{Colors.GREEN}✓ {text}{Colors.END}")
-
-
-def print_warning(text: str):
-    """打印警告信息"""
-    print(f"{Colors.YELLOW}⚠ {text}{Colors.END}")
-
-
-def print_error(text: str):
-    """打印错误信息"""
-    print(f"{Colors.RED}✗ {text}{Colors.END}")
-
-
-def load_cache(auto_init: bool = True) -> Optional[Dict[str, Any]]:
-    """
-    加载缓存文件
-    
-    Args:
-        auto_init: 缓存不存在或过期时是否自动初始化
-    
-    Returns:
-        缓存数据，如果加载失败则返回 None
-    """
-    # 检查缓存文件是否存在
-    if not CACHE_PATH.exists():
-        print_warning(f"缓存文件不存在: {CACHE_PATH}")
-        
-        if auto_init:
-            print(f"{Colors.CYAN}正在自动初始化缓存...{Colors.END}")
-            if _refresh_cache():
-                # 重新加载缓存
-                try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e:
-                    print_error(f"加载新缓存失败: {e}")
-                    return None
-            else:
-                print_error("自动初始化缓存失败")
-                return None
-        else:
-            print(f"\n请先运行缓存初始化命令:")
-            print(f"  python scripts/cache.py")
-            return None
-    
-    # 加载缓存文件
-    try:
-        with open(CACHE_PATH, 'r', encoding='utf-8') as f:
-            cache = json.load(f)
-    except json.JSONDecodeError as e:
-        print_error(f"缓存文件解析失败: {e}")
-        if auto_init:
-            print(f"{Colors.CYAN}正在自动刷新缓存...{Colors.END}")
-            if _refresh_cache():
-                # 重新加载缓存
-                try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e2:
-                    print_error(f"加载新缓存失败: {e2}")
-                    return None
-            else:
-                print_error("自动刷新缓存失败")
-                return None
-        return None
-    except Exception as e:
-        print_error(f"读取缓存文件失败: {e}")
-        if auto_init:
-            print(f"{Colors.CYAN}正在自动刷新缓存...{Colors.END}")
-            if _refresh_cache():
-                # 重新加载缓存
-                try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e2:
-                    print_error(f"加载新缓存失败: {e2}")
-                    return None
-            else:
-                print_error("自动刷新缓存失败")
-                return None
-        return None
-    
-    # 检查缓存是否过期（token 有效期通常为 12 小时）
-    meta = cache.get('_meta', {})
-    updated_at = meta.get('updated_at', 0)
-    current_time = int(time.time())
-    
-    if current_time - updated_at > CACHE_MAX_AGE:
-        print_warning(f"缓存已过期（上次更新: {datetime.fromtimestamp(updated_at).strftime('%Y-%m-%d %H:%M:%S')}）")
-        
-        if auto_init:
-            print(f"{Colors.CYAN}正在自动刷新缓存...{Colors.END}")
-            if _refresh_cache():
-                # 重新加载缓存
-                try:
-                    with open(CACHE_PATH, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                except Exception as e:
-                    print_error(f"加载新缓存失败: {e}")
-                    return None
-            else:
-                print_warning("自动刷新缓存失败，尝试使用现有缓存")
-                # 即使刷新失败，也返回现有缓存（可能还能用）
-                return cache
-        else:
-            print(f"\n请手动刷新缓存:")
-            print(f"  python scripts/cache.py")
-            # 返回过期缓存（可能还能用）
-            return cache
-    
-    return cache
 
 
 def _refresh_cache() -> bool:
@@ -298,12 +167,12 @@ def load_config_username() -> Optional[str]:
 
 
 def get_default_cluster(cache: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """获取默认计算中心"""
+    """获取默认区域"""
     clusters = cache.get('clusters', [])
     for cluster in clusters:
         if cluster.get('default') is True:
             return cluster
-    # 如果没有设置默认，返回第一个非 ac 的计算中心
+    # 如果没有设置默认，返回第一个非 ac 的区域
     for cluster in clusters:
         if cluster.get('clusterName') != 'ac':
             return cluster
@@ -325,16 +194,89 @@ def get_compute_user(token: str) -> str:
     return ''
 
 
+def get_ac_cluster_token(cache: Dict[str, Any]) -> Optional[str]:
+    """从缓存中获取 clusterName 为 'ac' 的 token"""
+    for cluster in cache.get('clusters', []):
+        if cluster.get('clusterName') == 'ac':
+            return cluster.get('token')
+    return None
+
+
+def format_datetime(time_str: str, is_end_time: bool = False) -> str:
+    """
+    格式化时间字符串，确保包含时分秒
+    
+    支持的输入格式:
+        - 2024-01-01
+        - 2024-01-01 00:00
+        - 2024-01-01 00:00:00
+    
+    输出格式:
+        - 开始时间: 2024-01-01 00:00:00
+        - 结束时间: 2024-01-31 23:59:59
+    
+    Args:
+        time_str: 输入的时间字符串
+        is_end_time: 是否为结束时间，如果是则补全为 23:59:59
+    """
+    if not time_str:
+        return time_str
+    
+    time_str = time_str.strip()
+    
+    # 如果已经是完整格式，直接返回
+    if len(time_str) == 19 and ':' in time_str:
+        return time_str
+    
+    # 只有日期部分 (2024-01-01)
+    if len(time_str) == 10 and time_str.count('-') == 2:
+        if is_end_time:
+            return time_str + " 23:59:59"
+        else:
+            return time_str + " 00:00:00"
+    
+    # 日期 + 时分 (2024-01-01 00:00)
+    if len(time_str) == 16 and time_str.count(':') == 1:
+        if is_end_time:
+            return time_str + ":59"
+        else:
+            return time_str + ":00"
+    
+    return time_str
+
+
+def get_ac_url_from_config() -> str:
+    """从配置文件中获取 SCNET_AC_URL，默认为 https://www.scnet.cn"""
+    try:
+        if CONFIG_PATH.exists():
+            with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        if key.strip() == 'SCNET_AC_URL':
+                            return value.strip().rstrip('/')
+    except Exception:
+        pass
+    return 'https://www.scnet.cn'
+
+
 class JobAPI:
     """作业查询 API 客户端"""
     
-    def __init__(self, cluster: Dict[str, Any]):
+    def __init__(self, cluster: Dict[str, Any], cache: Dict[str, Any]):
         self.cluster = cluster
+        self.cache = cache
         self.token = cluster.get('token', '')
         self.hpc_url = self._get_hpc_url()
         self.job_manager_id = self._get_job_manager_id()
         self.compute_user = get_compute_user(self.token)
         self.cluster_name = cluster.get('clusterName', '')
+        # AC 接口相关配置
+        self.ac_url = get_ac_url_from_config()
+        self.ac_token = get_ac_cluster_token(cache) or self.token
     
     def _get_hpc_url(self) -> str:
         """获取 HPC 服务 URL"""
@@ -374,74 +316,116 @@ class JobAPI:
         if timeout is None:
             timeout = self.TIMEOUT_NORMAL
             
-        try:
-            # 如果有查询参数，添加到 URL
-            if params:
-                query_string = urllib.parse.urlencode(params)
-                url = f"{url}?{query_string}"
-            
-            req = urllib.request.Request(
-                url,
-                data=data,
-                headers=headers,
-                method=method
-            )
-            with urllib.request.urlopen(req, context=SSL_CONTEXT, timeout=timeout) as response:
-                response_body = response.read().decode('utf-8')
-                return json.loads(response_body)
-        except urllib.error.HTTPError as e:
-            error_body = e.read().decode('utf-8')
+        # 实现带重试的请求
+        max_retries = 2
+        retry_count = 0
+        last_error = None
+        
+        while retry_count <= max_retries:
             try:
-                return json.loads(error_body)
-            except:
-                return {"code": e.code, "msg": error_body}
-        except Exception as e:
-            return {"code": -1, "msg": str(e)}
+                # 如果有查询参数，添加到 URL
+                if params:
+                    query_string = urllib.parse.urlencode(params)
+                    url = f"{url}?{query_string}"
+                
+                req = urllib.request.Request(
+                    url,
+                    data=data,
+                    headers=headers,
+                    method=method
+                )
+                
+                # 每次重试都创建新的 SSL 上下文
+                ssl_context = ssl.create_default_context()
+                
+                with urllib.request.urlopen(req, context=ssl_context, timeout=timeout) as response:
+                    response_body = response.read().decode('utf-8')
+                    return json.loads(response_body)
+                    
+            except urllib.error.HTTPError as e:
+                error_body = e.read().decode('utf-8')
+                try:
+                    return json.loads(error_body)
+                except:
+                    return {"code": e.code, "msg": error_body}
+                    
+            except Exception as e:
+                last_error = str(e)
+                error_msg = str(e).lower()
+                
+                # 检查是否是可重试的错误
+                if any(err in error_msg for err in ['ssl', 'eof', 'connection', 'reset', 'timeout']):
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        import time
+                        time.sleep(0.5 * retry_count)  # 递增延迟
+                        continue
+                
+                # 非可重试错误或重试次数用尽
+                return {"code": -1, "msg": last_error}
+        
+        # 所有重试都失败
+        return {"code": -1, "msg": f"请求失败（已重试{max_retries}次）: {last_error}"}
     
     def query_realtime_jobs(self, params: Dict[str, Any]) -> Tuple[Optional[List[Dict]], int, str]:
         """
         查询实时作业列表
-        GET /hpc/openapi/v2/jobs
+        POST /ac/openapi/v2/jobs/monitor/page-list
         
         Returns: (jobs_list, total_count, error_message)
         """
-        if not self.hpc_url or not self.job_manager_id:
-            return None, 0, "HPC 服务不可用"
+        if not self.ac_token:
+            return None, 0, "AC 认证 token 不可用"
         
-        # 构建查询参数
-        query_params = {
-            'strClusterIDList': self.job_manager_id,
-            'start': params.get('start', 0),
-            'limit': params.get('limit', 20)
+        # 构建请求体参数
+        # 注意：AC API 使用驼峰命名法
+        body_params: Dict[str, Any] = {
+            'page': params.get('page', 1),
+            'size': params.get('size', 10),
+            'clusterId': params.get('cluster_id', ''),
+            'queue': params.get('queue', ''),
+            'jobState': params.get('status', ''),  # 驼峰命名，与API返回字段一致
+            'showGroupJobs': params.get('show_group_jobs', ''),
+            'clusterUserName': params.get('cluster_user_name', ''),
+            'showAllData': params.get('show_all_data', False)
         }
         
-        # 可选参数
-        if params.get('job_id'):
-            query_params['strJobId'] = params['job_id']
-        if params.get('job_name'):
-            query_params['strJobName'] = params['job_name']
-        if params.get('queue'):
-            query_params['strQueueName'] = params['queue']
-        if params.get('status'):
-            status_code = JOB_STATUS_MAP.get(params['status'].lower(), params['status'])
-            query_params['strJobStat'] = status_code
-        if params.get('owner'):
-            query_params['strJobOwner'] = params['owner']
+        # 添加时间范围参数（如果提供）
+        if params.get('start_time'):
+            body_params['startTime'] = format_datetime(params['start_time'], is_end_time=False)
+        if params.get('end_time'):
+            body_params['endTime'] = format_datetime(params['end_time'], is_end_time=True)
         
-        # 构建 URL
-        query_string = urllib.parse.urlencode(query_params)
-        url = f"{self.hpc_url}/hpc/openapi/v2/jobs?{query_string}"
+        # 如果提供了 days 参数，计算时间范围
+        if params.get('days') and not params.get('start_time'):
+            end = datetime.now()
+            start = end - timedelta(days=params['days'])
+            body_params['startTime'] = start.strftime('%Y-%m-%d %H:%M:%S')
+            body_params['endTime'] = end.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 如果没有提供时间参数，默认使用最近7天（startTime为7天前的0点，endTime为当前时间）
+        if not body_params.get('startTime'):
+            end = datetime.now()
+            start = (end - timedelta(days=7)).replace(hour=0, minute=0, second=0)
+            body_params['startTime'] = start.strftime('%Y-%m-%d %H:%M:%S')
+            body_params['endTime'] = end.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # 构建 URL（域名写死为 AC 服务地址）
+        url = f"{self.ac_url}/ac/openapi/v2/jobs/monitor/page-list"
         
         headers = {
-            'token': self.token,
+            'token': self.ac_token,
             'Content-Type': 'application/json'
         }
         
-        result = self._make_request(url, headers, timeout=self.TIMEOUT_QUERY_REALTIME_JOBS)
+        data = json.dumps(body_params).encode('utf-8')
+        result = self._make_request(url, headers, data=data, method='POST', timeout=self.TIMEOUT_QUERY_REALTIME_JOBS)
         
         if result and str(result.get('code')) == '0':
             data = result.get('data', {})
-            return data.get('list', []), data.get('total', 0), ""
+            # AC接口返回的数据在 'records' 字段中
+            job_list = data.get('records', []) or data.get('list', [])
+            return job_list, data.get('total', 0), ""
         else:
             return None, 0, result.get('msg', '查询失败')
     
@@ -469,15 +453,19 @@ class JobAPI:
         else:
             return None, result.get('msg', '查询失败')
     
-    def query_user_queues(self, username: str) -> Tuple[Optional[List[str]], str]:
+    def query_user_queues(self, username: str, raw_response: bool = False) -> Tuple[Optional[List[str]], str, Optional[Dict]]:
         """
         查询用户可访问队列
         GET /hpc/openapi/v2/queuenames/users/{username}
         
-        Returns: (queues_list, error_message)
+        Args:
+            username: 用户名
+            raw_response: 是否返回原始响应数据
+        
+        Returns: (queues_list, error_message, raw_data)
         """
         if not self.hpc_url or not self.job_manager_id:
-            return None, "HPC 服务不可用"
+            return None, "HPC 服务不可用", None
         
         url = f"{self.hpc_url}/hpc/openapi/v2/queuenames/users/{urllib.parse.quote(username)}"
         
@@ -491,11 +479,23 @@ class JobAPI:
         result = self._make_request(url, headers, params=params, timeout=self.TIMEOUT_USER_QUEUES)
         
         if result and str(result.get('code')) == '0':
-            data = result.get('data', {})
-            queues = data.get('list', []) if isinstance(data, dict) else []
-            return queues, ""
+            data = result.get('data', [])
+            # 处理两种可能的数据结构：
+            # 1. data 是列表（直接返回队列列表）
+            # 2. data 是字典，包含 list 字段
+            if isinstance(data, list):
+                queues = data
+            elif isinstance(data, dict):
+                queues = data.get('list', [])
+            else:
+                queues = []
+            if raw_response:
+                return queues, "", result
+            return queues, "", None
         else:
-            return None, result.get('msg', '查询失败')
+            if raw_response:
+                return None, result.get('msg', '查询失败'), result
+            return None, result.get('msg', '查询失败'), None
     
     def get_cluster_info(self) -> Tuple[Optional[List[Dict]], str]:
         """
@@ -525,60 +525,61 @@ class JobAPI:
     def query_history_jobs(self, params: Dict[str, Any]) -> Tuple[Optional[List[Dict]], int, str]:
         """
         查询历史作业列表
-        GET /hpc/openapi/v2/historyjobs
+        POST /ac/openapi/v2/jobs/history/page-list
         
         Returns: (jobs_list, total_count, error_message)
         """
-        if not self.hpc_url or not self.job_manager_id:
-            return None, 0, "HPC 服务不可用"
+        if not self.ac_token:
+            return None, 0, "AC 认证 token 不可用"
         
-        # 构建查询参数
-        query_params = {
-            'strClusterNameList': self.job_manager_id,
-            'timeType': 'CUSTOM',
-            'start': params.get('start', 0),
-            'limit': params.get('limit', 20),
-            'isQueryByQueueTime': 'false'
+        # 构建请求体参数
+        body_params: Dict[str, Any] = {
+            'page': params.get('page', 1),
+            'size': params.get('size', 10),
+            'clusterId': params.get('cluster_id', ''),
+            'queue': params.get('queue', ''),
+            'jobState': params.get('status', ''),  # 驼峰命名，与API返回字段一致
+            'showGroupJobs': params.get('show_group_jobs', ''),
+            'clusterUserName': params.get('cluster_user_name', ''),
+            'showAllData': params.get('show_all_data', False)
         }
         
-        # 时间范围
-        if params.get('start_time') and params.get('end_time'):
-            query_params['startTime'] = params['start_time']
-            query_params['endTime'] = params['end_time']
-        else:
-            # 默认查询最近30天
+        # 添加时间范围参数（如果提供）
+        if params.get('start_time'):
+            body_params['startTime'] = format_datetime(params['start_time'], is_end_time=False)
+        if params.get('end_time'):
+            body_params['endTime'] = format_datetime(params['end_time'], is_end_time=True)
+        
+        # 如果提供了 days 参数，计算时间范围
+        if params.get('days') and not params.get('start_time'):
             end = datetime.now()
-            start = end - timedelta(days=params.get('days', 30))
-            query_params['startTime'] = start.strftime('%Y-%m-%d %H:%M:%S')
-            query_params['endTime'] = end.strftime('%Y-%m-%d %H:%M:%S')
+            start = end - timedelta(days=params['days'])
+            body_params['startTime'] = start.strftime('%Y-%m-%d %H:%M:%S')
+            body_params['endTime'] = end.strftime('%Y-%m-%d %H:%M:%S')
         
-        # 可选参数
-        if params.get('job_id'):
-            query_params['jobId'] = params['job_id']
-        if params.get('job_name'):
-            query_params['jobName'] = params['job_name']
-        if params.get('queue'):
-            query_params['queue'] = params['queue']
-        if params.get('status'):
-            status_code = JOB_STATUS_MAP.get(params['status'].lower(), params['status'])
-            query_params['jobState'] = status_code
-        if params.get('user'):
-            query_params['strUser'] = params['user']
+        # 如果没有提供时间参数，默认使用最近7天（startTime为7天前的0点，endTime为当前时间）
+        if not body_params.get('startTime'):
+            end = datetime.now()
+            start = (end - timedelta(days=7)).replace(hour=0, minute=0, second=0)
+            body_params['startTime'] = start.strftime('%Y-%m-%d %H:%M:%S')
+            body_params['endTime'] = end.strftime('%Y-%m-%d %H:%M:%S')
         
-        # 构建 URL
-        query_string = urllib.parse.urlencode(query_params)
-        url = f"{self.hpc_url}/hpc/openapi/v2/historyjobs?{query_string}"
+        # 构建 URL（域名写死为 AC 服务地址）
+        url = f"{self.ac_url}/ac/openapi/v2/jobs/history/page-list"
         
         headers = {
-            'token': self.token,
+            'token': self.ac_token,
             'Content-Type': 'application/json'
         }
         
-        result = self._make_request(url, headers, timeout=self.TIMEOUT_QUERY_HISTORY_JOBS)
+        data = json.dumps(body_params).encode('utf-8')
+        result = self._make_request(url, headers, data=data, method='POST', timeout=self.TIMEOUT_QUERY_HISTORY_JOBS)
         
         if result and str(result.get('code')) == '0':
             data = result.get('data', {})
-            return data.get('list', []), data.get('total', 0), ""
+            # AC接口返回的数据在 'records' 字段中
+            job_list = data.get('records', []) or data.get('list', [])
+            return job_list, data.get('total', 0), ""
         else:
             return None, 0, result.get('msg', '查询失败')
     
@@ -677,12 +678,24 @@ class JobAPI:
         map_app_job_info['GAP_NODE_STRING'] = job_params.get('node_string', '')
         map_app_job_info['GAP_SUBMIT_TYPE'] = job_params.get('submit_type', 'cmd')
         map_app_job_info['GAP_JOB_NAME'] = job_params.get('job_name', default_job_name)
-        map_app_job_info['GAP_WORK_DIR'] = job_params.get('work_dir', '')
+        
+        # 工作目录
+        work_dir = job_params.get('work_dir', '')
+        map_app_job_info['GAP_WORK_DIR'] = work_dir
         map_app_job_info['GAP_QUEUE'] = job_params.get('queue', '')
         map_app_job_info['GAP_WALL_TIME'] = job_params.get('wall_time', '24:00:00')
         map_app_job_info['GAP_APPNAME'] = job_params.get('appname', 'BASE')
-        map_app_job_info['GAP_STD_OUT_FILE'] = job_params.get('std_out', '')
-        map_app_job_info['GAP_STD_ERR_FILE'] = job_params.get('std_err', '')
+        
+        # 标准输出和错误文件路径（如果未指定，自动生成）
+        std_out = job_params.get('std_out', '')
+        std_err = job_params.get('std_err', '')
+        if work_dir:
+            if not std_out:
+                std_out = f"{work_dir}/std.out.%j"
+            if not std_err:
+                std_err = f"{work_dir}/std.err.%j"
+        map_app_job_info['GAP_STD_OUT_FILE'] = std_out
+        map_app_job_info['GAP_STD_ERR_FILE'] = std_err
         
         # 可选参数
         if job_params.get('nproc'):
@@ -737,17 +750,52 @@ def format_job_status(status_code: str) -> str:
         'statC': ('完成', Colors.GREEN),
         'statW': ('等待', Colors.YELLOW),
         'statX': ('其他', Colors.DIM),
+        'statDE': ('取消', Colors.YELLOW),
+        'statD': ('失败', Colors.RED),
+        'statT': ('超时', Colors.RED),
+        'statN': ('节点异常', Colors.RED),
+        'statRQ': ('重新运行', Colors.CYAN),
     }
     name, color = status_map.get(status_code, (status_code, Colors.END))
     return f"{color}{name}{Colors.END}"
 
 
-def display_query_params(api: JobAPI, params: Dict[str, Any], is_history: bool = False):
-    """显示查询条件参数"""
+def resolve_realtime_status(job: Dict) -> str:
+    """
+    解析实时作业的真实状态。
+    平台顶层 jobStatus 有时会延迟同步（如 statC 实际已失败），
+    此时优先以 jobInitAttr.JobState 或 reason 字段为准。
+    """
+    status = job.get('jobStatus', 'N/A')
+    init_attr = job.get('jobInitAttr') or {}
+    inner_state = init_attr.get('JobState', '')
+    reason = job.get('reason', '')
+    
+    # statC 完成状态下，若底层调度器状态为 FAILED 或 reason 为非零退出码，则真实状态为失败(statD)
+    if status == 'statC' and (inner_state == 'FAILED' or reason == 'NonZeroExitCode'):
+        return 'statD'
+    return status
+
+
+def display_query_params(api: JobAPI, params: Dict[str, Any], is_history: bool = False, is_ac_api: bool = True):
+    """显示查询条件参数
+    
+    Args:
+        api: JobAPI 实例
+        params: 查询参数
+        is_history: 是否为历史作业查询
+        is_ac_api: 是否为AC接口（实时/历史作业列表），如果是则显示"所有区域"
+    """
     print_section("🔍 查询条件")
     
-    print_item("计算中心", api.cluster_name)
-    print_item("JobManager ID", api.job_manager_id)
+    # AC接口查询所有区域，其他接口查询当前区域
+    if is_ac_api:
+        print_item("区域", "所有区域（AC聚合查询）")
+        print_item("AC Token", f"{api.ac_token[:20]}..." if api.ac_token else "N/A")
+    else:
+        print_item("区域", api.cluster_name)
+        print_item("JobManager ID", api.job_manager_id)
+    
     print_item("查询类型", "历史作业" if is_history else "实时作业")
     
     if params.get('job_id'):
@@ -758,50 +806,105 @@ def display_query_params(api: JobAPI, params: Dict[str, Any], is_history: bool =
         print_item("队列", params['queue'])
     if params.get('status'):
         print_item("状态", params['status'])
+    if params.get('cluster_id'):
+        print_item("区域ID", params['cluster_id'])
+    # if params.get('page') and params.get('page') != 1:
+    print_item("页码", params['page'])
+    # if params.get('size') and params.get('size') != 10:
+    print_item("每页条数", params['size'])
     if params.get('days'):
         print_item("时间范围", f"最近 {params['days']} 天")
-    if params.get('start_time') and params.get('end_time'):
+    elif params.get('start_time') and params.get('end_time'):
         print_item("开始时间", params['start_time'])
         print_item("结束时间", params['end_time'])
+    else:
+        # 显示默认时间范围（最近7天）
+        print_item("时间范围", "最近 7 天（默认）")
     
     print()
 
 
-def display_realtime_jobs(jobs: List[Dict], total: int):
-    """显示实时作业列表"""
+def display_realtime_jobs(jobs: List[Dict], total: int, group_by_cluster: bool = True):
+    """显示实时作业列表
+    
+    Args:
+        jobs: 作业列表
+        total: 作业总数
+        group_by_cluster: 是否按区域分组显示（AC聚合查询时启用）
+    """
     if not jobs:
         print_warning("未找到实时作业")
         return
     
-    print_section(f"📋 实时作业列表 (共 {total} 条)")
-    
-    for i, job in enumerate(jobs, 1):
-        job_id = job.get('jobId', 'N/A')
-        job_name = job.get('jobName', 'N/A')
-        status = job.get('jobStatus', 'N/A')
-        queue = job.get('queue', 'N/A')
-        nodes = job.get('nodeUsed', 'N/A')
-        cpus = job.get('procNumUsed', 0)
-        runtime = job.get('jobRunTime', 'N/A')
+    if group_by_cluster:
+        # 按区域分组
+        from collections import defaultdict
+        cluster_jobs = defaultdict(list)
+        for job in jobs:
+            cluster_name = job.get('clusterName', '未知区域')
+            cluster_jobs[cluster_name].append(job)
         
-        status_display = format_job_status(status)
+        print_section(f"📋 实时作业列表 (共 {total} 条)")
+        print()
         
-        print(f"\n  {Colors.BOLD}{i}. 作业 {job_id}{Colors.END}")
-        print(f"     名称: {Colors.CYAN}{job_name}{Colors.END}")
-        print(f"     状态: {status_display}")
-        print(f"     队列: {queue}")
-        print(f"     节点: {nodes}")
-        print(f"     CPU: {cpus} 核")
-        print(f"     运行时间: {runtime}")
+        # 按区域名称排序显示
+        for cluster_name, cluster_job_list in sorted(cluster_jobs.items()):
+            print(f"  {Colors.BOLD}{Colors.CYAN}▶ {cluster_name} ({len(cluster_job_list)} 条){Colors.END}")
+            print(f"  {Colors.CYAN}{'─' * 50}{Colors.END}")
+            
+            for i, job in enumerate(cluster_job_list, 1):
+                job_id = job.get('jobId', 'N/A')
+                job_name = job.get('jobName', 'N/A')
+                status = job.get('jobStatus', 'N/A')
+                queue = job.get('queue', 'N/A')
+                nodes = job.get('nodeUsed', 'N/A')
+                cpus = job.get('procNumUsed', 0)
+                runtime = job.get('jobRunTime', 'N/A')
+                
+                real_status = resolve_realtime_status(job)
+                status_display = format_job_status(real_status)
+                
+                print(f"\n    {Colors.BOLD}{i}. 作业 {job_id}{Colors.END}")
+                print(f"       名称: {Colors.CYAN}{job_name}{Colors.END}")
+                print(f"       状态: {status_display}")
+                print(f"       队列: {queue}")
+                print(f"       节点: {nodes}")
+                print(f"       CPU: {cpus} 核")
+                print(f"       运行时间: {runtime}")
+            
+            print()  # 区域之间空行
+    else:
+        print_section(f"📋 实时作业列表 (共 {total} 条)")
+        
+        for i, job in enumerate(jobs, 1):
+            job_id = job.get('jobId', 'N/A')
+            job_name = job.get('jobName', 'N/A')
+            status = job.get('jobStatus', 'N/A')
+            queue = job.get('queue', 'N/A')
+            nodes = job.get('nodeUsed', 'N/A')
+            cpus = job.get('procNumUsed', 0)
+            runtime = job.get('jobRunTime', 'N/A')
+            
+            real_status = resolve_realtime_status(job)
+            status_display = format_job_status(real_status)
+            
+            print(f"\n  {Colors.BOLD}{i}. 作业 {job_id}{Colors.END}")
+            print(f"     名称: {Colors.CYAN}{job_name}{Colors.END}")
+            print(f"     状态: {status_display}")
+            print(f"     队列: {queue}")
+            print(f"     节点: {nodes}")
+            print(f"     CPU: {cpus} 核")
+            print(f"     运行时间: {runtime}")
 
 
 def display_realtime_job_detail(job: Dict):
     """显示实时作业详情"""
     print_section("📄 实时作业详情")
     
+    real_status = resolve_realtime_status(job)
     print_item("作业ID", job.get('jobId', 'N/A'))
     print_item("作业名称", job.get('jobName', 'N/A'))
-    print_item("状态", format_job_status(job.get('jobStatus', 'N/A')))
+    print_item("状态", format_job_status(real_status))
     print_item("队列", job.get('queue', 'N/A'))
     print_item("用户", job.get('user', 'N/A'))
     print_item("工作目录", job.get('workDir', 'N/A'))
@@ -818,32 +921,75 @@ def display_realtime_job_detail(job: Dict):
     print_item("类型", job.get('jobmanagerType', 'N/A'), indent=1)
 
 
-def display_history_jobs(jobs: List[Dict], total: int):
-    """显示历史作业列表"""
+def display_history_jobs(jobs: List[Dict], total: int, group_by_cluster: bool = True):
+    """显示历史作业列表
+    
+    Args:
+        jobs: 作业列表
+        total: 作业总数
+        group_by_cluster: 是否按区域分组显示（AC聚合查询时启用）
+    """
     if not jobs:
         print_warning("未找到历史作业")
         return
     
-    print_section(f"📋 历史作业列表 (共 {total} 条)")
-    
-    for i, job in enumerate(jobs, 1):
-        job_id = job.get('jobId', 'N/A')
-        job_name = job.get('jobName', 'N/A')
-        status = job.get('jobState', 'N/A')
-        queue = job.get('queue', 'N/A')
-        start_time = job.get('jobStartTime', 'N/A')
-        end_time = job.get('jobEndTime', 'N/A')
-        walltime = job.get('jobWalltimeUsed', 'N/A')
+    if group_by_cluster:
+        # 按区域分组
+        from collections import defaultdict
+        cluster_jobs = defaultdict(list)
+        for job in jobs:
+            cluster_name = job.get('clusterName', '未知区域')
+            cluster_jobs[cluster_name].append(job)
         
-        status_display = format_job_status(status)
+        print_section(f"📋 历史作业列表 (共 {total} 条)")
+        print()
         
-        print(f"\n  {Colors.BOLD}{i}. 作业 {job_id}{Colors.END}")
-        print(f"     名称: {Colors.CYAN}{job_name}{Colors.END}")
-        print(f"     状态: {status_display}")
-        print(f"     队列: {queue}")
-        print(f"     开始: {start_time}")
-        print(f"     结束: {end_time}")
-        print(f"     运行时长: {walltime} 秒")
+        # 按区域名称排序显示
+        for cluster_name, cluster_job_list in sorted(cluster_jobs.items()):
+            print(f"  {Colors.BOLD}{Colors.CYAN}▶ {cluster_name} ({len(cluster_job_list)} 条){Colors.END}")
+            print(f"  {Colors.CYAN}{'─' * 50}{Colors.END}")
+            
+            for i, job in enumerate(cluster_job_list, 1):
+                job_id = job.get('jobId', 'N/A')
+                job_name = job.get('jobName', 'N/A')
+                status = job.get('jobState', 'N/A')
+                queue = job.get('queue', 'N/A')
+                start_time = job.get('jobStartTime', 'N/A')
+                end_time = job.get('jobEndTime', 'N/A')
+                walltime = job.get('jobWalltimeUsed', 'N/A')
+                
+                status_display = format_job_status(status)
+                
+                print(f"\n    {Colors.BOLD}{i}. 作业 {job_id}{Colors.END}")
+                print(f"       名称: {Colors.CYAN}{job_name}{Colors.END}")
+                print(f"       状态: {status_display}")
+                print(f"       队列: {queue}")
+                print(f"       开始: {start_time}")
+                print(f"       结束: {end_time}")
+                print(f"       运行时长: {walltime} 秒")
+            
+            print()  # 区域之间空行
+    else:
+        print_section(f"📋 历史作业列表 (共 {total} 条)")
+        
+        for i, job in enumerate(jobs, 1):
+            job_id = job.get('jobId', 'N/A')
+            job_name = job.get('jobName', 'N/A')
+            status = job.get('jobState', 'N/A')
+            queue = job.get('queue', 'N/A')
+            start_time = job.get('jobStartTime', 'N/A')
+            end_time = job.get('jobEndTime', 'N/A')
+            walltime = job.get('jobWalltimeUsed', 'N/A')
+            
+            status_display = format_job_status(status)
+            
+            print(f"\n  {Colors.BOLD}{i}. 作业 {job_id}{Colors.END}")
+            print(f"     名称: {Colors.CYAN}{job_name}{Colors.END}")
+            print(f"     状态: {status_display}")
+            print(f"     队列: {queue}")
+            print(f"     开始: {start_time}")
+            print(f"     结束: {end_time}")
+            print(f"     运行时长: {walltime} 秒")
 
 
 def display_history_job_detail(job: Dict):
@@ -1156,9 +1302,9 @@ def display_submit_result(job_id: Optional[str], message: str):
         # 提供常见错误解决方案
         if "Access/permission denied" in message or "access restricted" in message:
             print(f"\n{Colors.YELLOW}可能原因:{Colors.END}")
-            print(f"  1. 您的账户在当前计算中心没有作业提交权限")
-            print(f"  2. 请联系计算中心管理员开通权限")
-            print(f"  3. 或尝试切换到其他您有权限的计算中心")
+            print(f"  1. 您的账户在当前区域没有作业提交权限")
+            print(f"  2. 请联系区域管理员开通权限")
+            print(f"  3. 或尝试切换到其他您有权限的区域")
         elif "Required partition not available" in message:
             print(f"\n{Colors.YELLOW}可能原因:{Colors.END}")
             print(f"  1. 指定的队列当前不可用（维护或已满）")
@@ -1217,8 +1363,10 @@ def main():
     # 筛选条件
     parser.add_argument('--job-name', type=str, help='作业名称（支持模糊匹配）')
     parser.add_argument('--queue', type=str, help='队列名称')
-    parser.add_argument('--status', type=str, choices=['running', 'queue', 'queued', 'hold', 'suspend', 'exit', 'completed', 'wait', 'waiting', 'other'],
-                       help='作业状态：running(运行), queue/queued(排队), hold(保留), suspend(挂起), exit(退出), completed(完成), wait/waiting(等待), other(其他)')
+    parser.add_argument('--status', type=str, 
+                       choices=['running', 'queue', 'queued', 'hold', 'suspend', 'exit', 'completed', 'wait', 'waiting', 'other',
+                               'statR', 'statQ', 'statH', 'statS', 'statE', 'statC', 'statW', 'statX', 'statDE', 'statD', 'statT', 'statN', 'statRQ'],
+                       help='作业状态：running/statR(运行), queue/statQ(排队), hold/statH(保留), suspend/statS(挂起), exit/statE(退出), completed/statC(完成), wait/statW(等待), other/statX(其他), statDE(取消), statD(失败), statT(超时), statN(节点异常), statRQ(重新运行)')
     parser.add_argument('--owner', type=str, help='作业所有者用户名（实时作业）')
     parser.add_argument('--user', type=str, help='用户名（历史作业）')
     
@@ -1227,9 +1375,17 @@ def main():
     parser.add_argument('--start-time', type=str, help='开始时间，格式：YYYY-MM-DD HH:MM:SS')
     parser.add_argument('--end-time', type=str, help='结束时间，格式：YYYY-MM-DD HH:MM:SS')
     
-    # 分页
-    parser.add_argument('--start', type=int, default=0, help='起始位置（分页）')
-    parser.add_argument('--limit', type=int, default=20, help='每页条数（默认20）')
+    # 分页（旧版 HPC 接口）
+    parser.add_argument('--start', type=int, default=0, help='起始位置（分页，旧版接口）')
+    parser.add_argument('--limit', type=int, default=20, help='每页条数（默认20，旧版接口）')
+    
+    # AC 接口查询参数（新版）
+    parser.add_argument('--page', type=int, default=1, help='页码（AC接口，默认1）')
+    parser.add_argument('--size', type=int, default=10, help='每页条数（AC接口，默认10）')
+    parser.add_argument('--cluster-id', type=str, help='区域ID（AC接口）')
+    parser.add_argument('--show-group-jobs', type=str, help='展示组所有成员作业：true 为展示（AC接口）')
+    parser.add_argument('--show-all-data', action='store_true', help='是否返回所有字段（AC接口，默认false）')
+    parser.add_argument('--cluster-user-name', type=str, help='用户名（AC接口，默认为空）')
     
     # 提交作业参数
     
@@ -1257,39 +1413,34 @@ def main():
     if not cache:
         sys.exit(1)
     
-    # 获取默认计算中心
+    # 获取默认区域
     cluster = get_default_cluster(cache)
     if not cluster:
-        print_error("未找到默认计算中心")
+        print_error("未找到默认区域")
         sys.exit(1)
     
     # 创建 API 客户端
-    api = JobAPI(cluster)
+    api = JobAPI(cluster, cache)
     
-    if not api.hpc_url:
-        print_error("当前计算中心未配置 HPC 服务")
+    if not api.ac_token:
+        print_error("AC 认证 token 不可用，请检查缓存是否正确初始化")
         sys.exit(1)
     
     # 处理查询用户队列
     if args.queues:
-        print_header(f"用户可访问队列 - {cluster.get('clusterName', 'N/A')}")
-        
         if not api.job_manager_id:
             print_error("未找到 JobManager ID")
             sys.exit(1)
         
-        queues, error = api.query_user_queues(api.compute_user or "")
-        if error:
-            print_error(f"查询失败: {error}")
-            sys.exit(1)
+        queues, error, raw_data = api.query_user_queues(api.compute_user or "", raw_response=True)
         
-        display_user_queues(queues)
+        # 直接输出原始 API 响应
+        if raw_data:
+            print(json.dumps(raw_data, ensure_ascii=False, indent=2))
+        else:
+            print(json.dumps({"code": -1, "msg": error or "未知错误"}, ensure_ascii=False, indent=2))
         
-        # 底部提示
-        print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
-        print(f"  提示: 使用 {Colors.YELLOW}python scripts/job.py --submit{Colors.END} 提交作业时选择队列")
-        print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
-        return
+        sys.exit(0 if not error else 1)
     
     # 处理查询集群信息
     if args.cluster_info:
@@ -1309,7 +1460,7 @@ def main():
         return
     
     if not api.job_manager_id:
-        print_error("当前计算中心未配置 JobManager")
+        print_error("当前区域未配置 JobManager")
         sys.exit(1)
     
     # 构建查询参数
@@ -1322,10 +1473,20 @@ def main():
         'status': args.status,
         'owner': args.owner or api.compute_user,
         'user': args.user or api.compute_user,
-        'days': args.days,
         'start_time': args.start_time,
-        'end_time': args.end_time
+        'end_time': args.end_time,
+        # AC接口分页参数
+        'page': args.page,
+        'size': args.size,
+        'cluster_id': args.cluster_id,
+        'show_group_jobs': args.show_group_jobs,
+        'cluster_user_name': args.cluster_user_name,
+        'show_all_data': args.show_all_data
     }
+    
+    # 只有当明确指定了 --days 参数时才加入（区分默认值）
+    if '--days' in sys.argv:
+        params['days'] = args.days
     
     # 处理提交作业
     if args.submit:
@@ -1337,8 +1498,8 @@ def main():
             print(f"\n{Colors.YELLOW}用法示例:{Colors.END}")
             print(f'  python scripts/job.py --submit --cmd "sleep 100" --queue comp')
             print(f"\n{Colors.CYAN}使用自然语言入口更方便:{Colors.END}")
-            print(f'  python scnet.py "提交作业 sleep 100 --queue comp"')
-            print(f'  python scnet.py "提交作业帮助"')
+            print(f'  python scripts/scnet.py "提交作业 sleep 100 --queue comp"')
+            print(f'  python scripts/scnet.py "提交作业帮助"')
             sys.exit(1)
         
         # 设置默认工作目录（用户家目录）
@@ -1370,18 +1531,24 @@ def main():
         if not job_id:
             sys.exit(1)
         
-        # 底部提示
-        print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
-        print(f"  提示: 使用 {Colors.YELLOW}python scripts/job.py --job-id {job_id}{Colors.END} 查看作业详情")
-        print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
         return
     
     # 打印标题
-    cluster_name = cluster.get('clusterName', 'N/A')
-    print_header(f"作业查询 - {cluster_name}")
+    # 判断是否为AC接口查询（实时/历史作业列表）
+    # AC接口查询所有区域，其他接口查询当前区域
+    # 如果指定了job_id且没有时间范围参数，则查询作业详情（非AC列表接口）
+    has_time_range = bool(args.start_time or args.end_time or '--days' in sys.argv)
+    is_job_detail_query = bool(args.job_id and not has_time_range)
+    is_ac_list_query = not is_job_detail_query
+    
+    if is_ac_list_query:
+        print_header("作业查询 - 所有区域（AC聚合）")
+    else:
+        cluster_name = cluster.get('clusterName', 'N/A')
+        print_header(f"作业查询 - {cluster_name}")
     
     # 显示查询条件
-    display_query_params(api, params, is_history=args.history)
+    display_query_params(api, params, is_history=args.history, is_ac_api=is_ac_list_query)
     
     # 处理删除作业
     if args.delete:
@@ -1408,16 +1575,14 @@ def main():
         if not success:
             sys.exit(1)
         
-        # 底部提示
-        print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
-        print(f"  提示: 使用 {Colors.YELLOW}python scripts/cache.py --switch \"中心名称\"{Colors.END} 切换计算中心")
-        print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
         return
     
     # 根据参数决定查询类型
     if args.history:
         # 历史作业查询
-        if args.job_id:
+        # 如果有时间范围参数，优先执行列表查询（即使有 job_id 也认为是过滤条件）
+        has_time_range = bool(args.start_time or args.end_time or args.days != 30)
+        if args.job_id and not has_time_range:
             # 历史作业详情
             job, error = api.query_history_job_detail(args.job_id)
             if error:
@@ -1433,32 +1598,35 @@ def main():
             if error:
                 print_error(f"查询失败: {error}")
                 sys.exit(1)
-            display_history_jobs(jobs, total)
+            display_history_jobs(jobs, total, group_by_cluster=is_ac_list_query)
     else:
         # 实时作业查询
-        if args.job_id:
-            # 实时作业详情
+        # 如果有时间范围参数，优先执行列表查询（即使有 job_id 也认为是过滤条件）
+        has_time_range = bool(args.start_time or args.end_time or args.days != 30)
+        if args.job_id and not has_time_range:
+            # 先查询实时作业详情
             job, error = api.query_realtime_job_detail(args.job_id)
-            if error:
-                print_error(f"查询失败: {error}")
-                sys.exit(1)
-            if job:
+            # 再查询历史作业详情（历史记录包含最终准确状态）
+            history_job, history_error = api.query_history_job_detail(args.job_id)
+            
+            if history_job:
+                # 优先使用历史记录，包含最终状态（如真实的失败/退出）和退出码
+                display_history_job_detail(history_job)
+            elif job:
                 display_realtime_job_detail(job)
             else:
-                print_warning("未找到该实时作业")
+                if error:
+                    print_error(f"查询失败: {error}")
+                    sys.exit(1)
+                print_warning("未找到该作业")
         else:
             # 实时作业列表
             jobs, total, error = api.query_realtime_jobs(params)
             if error:
                 print_error(f"查询失败: {error}")
                 sys.exit(1)
-            display_realtime_jobs(jobs, total)
+            display_realtime_jobs(jobs, total, group_by_cluster=is_ac_list_query)
     
-    # 底部提示
-    print(f"\n{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}")
-    print(f"  提示: 使用 {Colors.YELLOW}python scripts/cache.py --switch \"中心名称\"{Colors.END} 切换计算中心")
-    print(f"{Colors.BOLD}{Colors.CYAN}{'=' * 70}{Colors.END}\n")
-
 
 if __name__ == "__main__":
     main()

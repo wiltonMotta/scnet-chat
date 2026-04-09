@@ -6,16 +6,54 @@ SCNet Chat 全局配置文件
 """
 
 from pathlib import Path
+import os
+from functools import lru_cache
 
 # =============================================================================
 # 路径配置
 # =============================================================================
 
-# 缓存文件路径（~/.scnet-chat-cache.json）
-CACHE_PATH = Path.home() / ".scnet-chat-cache.json"
-
 # 配置文件路径（~/.scnet-chat.env）
 CONFIG_PATH = Path.home() / ".scnet-chat.env"
+
+
+def get_cache_path(config_path: Path = CONFIG_PATH) -> Path:
+    """根据配置文件中的 SCNET_USER 获取缓存文件路径"""
+    username = None
+    if config_path.exists():
+        try:
+            with open(config_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    if '=' in line:
+                        key, value = line.split('=', 1)
+                        if key.strip() == 'SCNET_USER':
+                            username = value.strip()
+                            break
+        except Exception:
+            pass
+    if not username:
+        return Path.home() / ".scnet-chat-cache.json"
+    return Path.home() / f".scnet-chat-cache-{username}.json"
+
+
+@lru_cache(maxsize=1)
+def get_cached_cache_path() -> Path:
+    """
+    获取缓存文件路径（结果会被缓存）
+    
+    使用 lru_cache 避免重复读取配置文件，提升性能。
+    如果需要刷新缓存路径，请调用 get_cache_path()。
+    """
+    return get_cache_path()
+
+
+# 向后兼容的缓存文件路径常量
+# 注意：这是一个常量，在导入时计算一次
+# 如果需要动态获取（考虑缓存），请使用 get_cached_cache_path()
+CACHE_PATH = get_cache_path()
 
 # =============================================================================
 # 缓存过期时间（秒）
