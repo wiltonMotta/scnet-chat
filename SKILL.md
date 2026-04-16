@@ -1,431 +1,237 @@
 ---
 name: scnet-chat
-description: 通过自然语言对话，轻松掌控 SCNet 超算平台的账户、作业、文件、Notebook 与容器资源，自动理解意图并智能组合接口，让超算管理更简单、更高效。
+description: 通过自然语言交互管理 SCNet Chat 超算平台。
+  Use when: 用户需要查询/管理 SCNet 超算平台资源，包括查询作业、提交作业、管理文件、查看账户信息、切换区域等。
+  触发关键词：scnet、超算、作业、作业管理、文件管理、账户、余额、查询余额、机时、集群、队列、上传、下载、重命名、区域切换、昆山、山东、西安等。
+metadata:
+  openclaw:
+    requires:
+      env:
+        - SCNET_ACCESS_KEY
+        - SCNET_SECRET_KEY
+        - SCNET_USER
+      bins:
+        - python3
+        - python
 license: MIT
 clawhub:
   slug: scnet-chat
-  repo: wiltonMotta/skills
-  repoPath: skills/scnet-chat
-  ref: main
-  version: main
+  repo: https://github.com/wiltonMotta/scnet-chat
   autoEnable: true
-  url: https://clawhub.ai/wiltonMotta/scnet-chat
+  version: 2.1.0
 ---
 
-# SCNet Chat Skill
+# SCNet Chat 技能
 
-查询SCNet（国家超算互联网平台）账户信息、作业管理、文件管理、Notebook管理和容器管理。
+通过自然语言交互管理 SCNet 超算平台资源。
 
-## 功能
+## When to Run
 
-### 1. 账户信息
-- **获取Token列表**: 获取用户在所有计算中心的token
-- **查询账户余额**: 获取账户余额和用户信息
+- 用户提到 SCNet、超算、作业管理、文件管理等关键词
+- 用户需要查询作业、提交作业、删除作业
+- 用户需要上传/下载/管理远程文件
+- 用户需要查看账户信息、余额、机时
+- 用户需要切换计算区域（昆山、山东、西安等）
 
-### 2. 作业管理
-- **查询实时作业**: 遍历所有计算中心查询正在运行的作业
-- **查询历史作业**: 查询历史作业（可指定天数范围）
-- **查询用户可访问队列**: 获取计算中心可用队列列表
-- **提交作业**: 提交新作业到指定队列
-- **删除作业**: 取消/删除运行中或排队中的作业
-- **查询作业详情**: 获取作业的详细信息
+## Workflow
 
-### 3. 文件管理
-- **查询文件列表**: 列出目录内容
-- **创建文件夹**: 支持自动创建父目录
-- **创建文件**: 创建空文件
-- **上传文件**: 上传本地文件到远程
-- **下载文件**: 下载远程文件到本地
-- **删除文件**: 删除文件或目录
-- **检查文件存在**: 检查文件/目录是否存在
+1. **确定用户意图**：识别用户是想查询作业、管理文件、查看账户信息还是切换区域
+2. **检查配置**：确保 `~/.scnet-chat.env` 文件存在且包含必要的环境变量
+3. **执行命令**（根据操作系统选择正确的启动脚本）：
+   - **macOS/Linux**: `./scripts/run "自然语言命令"`
+   - **Windows**: `./scripts/run.bat "自然语言命令"`
+4. **返回结果**：将执行结果格式化后返回给用户
 
-### 4. Notebook管理
-- **创建Notebook实例**: 支持指定镜像、加速器类型/数量、资源分组等
-- **Notebook实例开机/关机/释放**: 完整生命周期管理
-- **修改Notebook实例名称**: 重命名功能
-- **查询Notebook实例列表/详情**: 获取所有Notebook信息
-- **查询Jupyter服务地址**: 获取访问URL
-- **查询镜像列表**: 支持DCU/GPU加速器类型筛选
-- **查询模型镜像列表**: 预训练模型镜像
-- **查询Notebook资源**: 可用资源信息
+> **说明**：`scripts/run` 和 `scripts/run.bat` 是跨平台包装脚本，会自动检测并使用正确的 Python 解释器（macOS/Linux 优先使用 `python3`，Windows 优先使用 `python`）。
 
-### 5. 容器管理
-- **创建容器实例**: 支持多种任务类型(ssh/jupyter/codeserver/rstudio)
-- **启动/停止/删除容器实例**: 完整生命周期管理
-- **批量执行脚本**: 在所有容器或首个容器执行脚本
-- **查询容器实例列表/详情**: 获取所有容器信息
-- **获取容器实例URL**: 访问容器服务
-- **更新资源规格**: 修改CPU/GPU/内存配置
-- **查询节点资源限额**: 获取资源限制信息
-- **查询资源分组**: 获取DCU/GPU/CPU资源分组
-- **检查授权的挂载路径**: 获取可挂载目录列表
-- **获取镜像列表**: 查询可用镜像
+### 常用命令示例
 
-## 配置方式
-
-技能启动时会**自动查找配置文件**，如果未找到会提示用户输入配置信息。
-
-### 配置加载工作流程
-
-```
-启动技能
-    ↓
-尝试读取 ~/.scnet-chat.env
-    ↓ 未找到
-提示用户输入配置信息
-    ↓
-保存到 ~/.scnet-chat.env
-    ↓
-继续执行
-```
-
-### 配置文件格式
-
-创建 `~/.scnet-chat.env` 文件：
-
+**macOS/Linux:**
 ```bash
-cat > ~/.scnet-chat.env << 'EOF'
-SCNET_ACCESS_KEY=your_access_key_here
-SCNET_SECRET_KEY=your_secret_key_here
-SCNET_USER=your_username_here
-EOF
+# 查询作业
+# 作业管理 - 查询（基础）
+# ⚠️ 注意：实时作业列表和历史作业列表是全区域聚合查询，一次调用返回所有区域的作业
+./scripts/run "查询作业"                      # 查询所有区域的实时作业
+./scripts/run "查看运行中的作业"              # 查询所有区域运行中的作业
+./scripts/run "历史作业"                      # 查询所有区域的历史作业
+./scripts/run "作业详情 12345"                # 查询特定作业详情（需指定区域）
 
-chmod 600 ~/.scnet-chat.env
-```
+# 作业管理 - 查询（高级筛选）
+./scripts/run "查询作业 第2页 每页20条"
+./scripts/run "查询队列 debug 的作业 所有字段"
+./scripts/run "查询用户 zhangsan 的作业"
+./scripts/run "查询组作业"
+./scripts/run "查询区域ID 12345 的作业"       # 筛选特定区域的作业
 
-**注意**：
-- 这是唯一的配置存储方式
-- 如果文件不存在，技能会交互式提示用户输入配置并自动保存
-- 配置文件建议使用 `chmod 600` 设置权限，防止他人读取
+# 作业管理 - 历史作业查询（高级用法）
+./scripts/run "历史作业 开始时间 2024-01-01 00:00:00 结束时间 2024-01-31 23:59:59"
+./scripts/run "历史作业 最近7天"
+./scripts/run "查询最近三天的历史作业"                    # 中文数字支持
+./scripts/run "查询从2026-04-01到2026-04-03的历史作业"   # 简写日期范围
+./scripts/run "查询历史作业，每页5条，显示第二页"         # 中文页码
+./scripts/run "查询历史作业，状态为失败"                  # 中文状态筛选
+./scripts/run "查询历史作业，队列为comp，每页10条"
 
-### 如何获取凭证
+# 作业管理 - 实时作业查询（高级用法）
+./scripts/run "查询作业 开始时间 2024-01-01 00:00:00 结束时间 2024-01-31 23:59:59"
+./scripts/run "查询最近3天的作业"
+./scripts/run "查询运行中的作业，每页5条"
+./scripts/run "查询作业，状态为排队，显示第2页"
 
-1. 登录SCNet平台: https://www.scnet.cn/ui/console/index.html#/personal/auth-manage
-2. 进入个人中心 → 访问控制
-3. 创建访问密钥，在自动下载的文件【AK_SK_17736*********.xls】中，获取Accesskey (AK) 和 Secretkey (SK)
+# 提交作业
+./scripts/run "提交作业 sleep 900" # 简单命令
+./scripts/run "提交作业 启动命令 sleep 900 队列 comp 核心数 2  运行时间 12:00:00 作业名称 production-run1 " # 复杂命令
 
-## 交互示例
+#提交作业帮助
+./scripts/run "如何提交作业"
+./scripts/run "提交作业帮助"
+./scripts/run "作业有哪些参数"
 
-查询我的账户余额 | 我欠费了吗 | account balance
+# 删除作业
+./scripts/run "删除作业 12345"
 
-昆山有哪些作业 | 我有哪些作业 | 查询实时作业 | 查询历史作业
-帮我提交作业 | 我要跑作业 | 在昆山提交作业 | 在昆山使用脚本文件/xx.xx提交作业
-(看看 | 查询 | 查看 | 停止 | 运行 | 删除 | 取消)作业 + 12345678(8位数字作业号)
+# 作业管理 - 队列和集群
+./scripts/run "查询队列"
+./scripts/run "集群信息"
 
-创建目录/public/home/kshdtest，然后上传文件/../test.sh，和文件夹/.../source/ 以上传目录为工作目录,test.sh位启动脚本，使用6个节点，每节点8核心cup，运行时长8小时，提交作业。
+# 文件管理 - 列表和上传下载
+./scripts/run "文件列表"
+./scripts/run "查看文件 /public/home/user"
+./scripts/run "上传文件 ./data 到 /public/home/user/"
+./scripts/run "下载文件 /public/home/user/data 到 ./"
 
-notebook 开机 | 启动 | 停止 | 关闭 | 释放 | 删除 | 访问 | 查询 | 查看 | 创建 
-... ...
+# 文件管理 - 创建和删除
+./scripts/run "创建目录 /public/home/user/workspace"
+./scripts/run "创建文件 /public/home/user/data"
+./scripts/run "删除文件 /public/home/user/data"
 
-## 使用方法
-
-### 方式1：命令行直接运行
-
-```bash
-python3 ~/.openclaw/workspace/skills/scnet-chat/scripts/scnet_chat.py
-```
-
-### 方式2：作业提交向导
-
-```python
-from scnet_chat import SCNetClient, JobSubmitWizard
-
-# 初始化客户端
-client = SCNetClient(access_key, secret_key, user)
-client.init_tokens()
-
-# 创建作业提交向导
-wizard = JobSubmitWizard(client, "华东一区【昆山】")
-
-# 获取可用队列
-queues = wizard.get_available_queues()
-
-# 构建作业配置
-job_config = wizard.build_job_config(
-    job_name="MyJob",
-    cmd="python main.py",
-    nnodes="1",
-    ppn="4",
-    queue="Agent0",
-    wall_time="01:00:00"
-)
-
-# 预览配置（会自动展示参数和可用队列选项）
-print(wizard.preview_job_config(job_config))
-
-# 提交作业（会询问用户确认）
-job_id = wizard.submit(job_config)
-# 或使用 auto_confirm=True 跳过确认
-# job_id = wizard.submit(job_config, auto_confirm=True)
-print(f"作业ID: {job_id}")
-```
-
-**作业提交流程说明：**
-
-1. **参数预览**: 调用 `submit()` 时会自动显示完整的作业配置参数
-2. **队列检查**: 如果未指定队列或队列无效，会自动列出可用队列供选择
-3. **用户确认**: 必须输入 `yes`/`y`/`是` 确认后才提交，防止误操作
-4. **自动模式**: 使用 `auto_confirm=True` 可跳过确认（适合脚本自动化）
-
-### 方式3：Notebook管理
-
-```python
-from scnet_chat import SCNetClient
-
-client = SCNetClient(access_key, secret_key, user)
-client.init_tokens()
-
-# 获取Notebook管理器
-nb_mgr = client.get_notebook_manager()
-
-# 查询Notebook列表
-result = nb_mgr.list_notebooks()
-
-# 创建Notebook
-result = nb_mgr.create_notebook(
-    cluster_id="11250",
-    image_config={"path": "...", "name": "..."},
-    accelerator_type="DCU",
-    accelerator_number="1"
-)
-
-# 开机/关机/释放
-nb_mgr.start_notebook(notebook_id)
-nb_mgr.stop_notebook(notebook_id)
-nb_mgr.release_notebook(notebook_id)
-```
-
-### 方式4：容器管理
-
-```python
-from scnet_chat import SCNetClient
-
-client = SCNetClient(access_key, secret_key, user)
-client.init_tokens()
-
-# 获取容器管理器
-container_mgr = client.get_container_manager()
-
-# 查询容器列表
-result = container_mgr.list_containers()
-
-# 创建容器
-config = {
-    "instanceServiceName": "MyContainer",
-    "taskType": "jupyter",
-    "acceleratorType": "dcu",
-    "version": "jupyterlab:1.0",
-    "imagePath": "...",
-    "cpuNumber": 3,
-    "gpuNumber": 1,
-    "ramSize": 15360,
-    "resourceGroup": "kshdtest"
-}
-result = container_mgr.create_container(config)
-
-# 启动/停止/删除容器
-container_mgr.start_container(instance_id)
-container_mgr.stop_containers([instance_id])
-container_mgr.delete_containers([instance_id])
-
-# 执行脚本
-container_mgr.execute_script(instance_id, "echo 'hello'")
-
-# 查询资源分组
-result = container_mgr.get_resource_groups()
-```
-
-### 方式5：直接调用客户端方法
-
-```python
-from scnet_chat import SCNetClient
-
-client = SCNetClient(access_key, secret_key, user)
-client.init_tokens()
+# 文件管理 - 复制移动和重命名
+./scripts/run "复制文件 /src/data 到 /dst/"
+./scripts/run "移动文件 /src/data 到 /dst/"
+./scripts/run "重命名 /old/data 为 data1"
+./scripts/run "检查文件 /public/home/user/file"
 
 # 账户信息
-account = client.get_account_info()
+./scripts/run "查询余额"
+./scripts/run "查询用户"
+./scripts/run "作业统计"
+./scripts/run "机时"
 
-# 作业操作
-queues = client.get_user_queues("华东一区【昆山】")
-job_id = client.submit_job("华东一区【昆山】", {...})
+# 区域切换
+./scripts/run "切换到山东"
+./scripts/run "切换到西安"
 
-# 文件操作
-client.mkdir("华东一区【昆山】", "/public/home/user/workspace")
-client.upload("华东一区【昆山】", "/local/file.txt", "/remote/dir/")
+# 缓存管理
+./scripts/run "刷新缓存"
 
-# Notebook操作
-nb_mgr = client.get_notebook_manager()
-nb_mgr.list_notebooks()
-
-# 容器操作
-container_mgr = client.get_container_manager()
-container_mgr.list_containers()
+# 帮助
+./scripts/run "帮助"
 ```
 
-## 自然语言意图解析
+**Windows:**
+```bash
+# 查询作业
+# 作业管理 - 查询（基础）
+# ⚠️ 注意：实时作业列表和历史作业列表是全区域聚合查询，一次调用返回所有区域的作业
+a/scripts/run.bat "查询作业"                      # 查询所有区域的实时作业
+./scripts/run.bat "查看运行中的作业"              # 查询所有区域运行中的作业
+./scripts/run.bat "历史作业"                      # 查询所有区域的历史作业
+./scripts/run.bat "作业详情 12345"                # 查询特定作业详情（需指定区域）
 
-技能意图识别规则文档：https://sugon-hpc.feishu.cn/docx/IRUkdq8PDoUT6QxdkOicmiD9nFi
+# 作业管理 - 查询（高级筛选）
+./scripts/run.bat "查询作业 第2页 每页20条"
+./scripts/run.bat "查询队列 debug 的作业 所有字段"
+./scripts/run.bat "查询用户 zhangsan 的作业"
+./scripts/run.bat "查询组作业"
+./scripts/run.bat "查询区域ID 12345 的作业"       # 筛选特定区域的作业
 
-### 计算中心识别
+# 作业管理 - 历史作业查询（高级用法）
+./scripts/run.bat "历史作业 开始时间 2024-01-01 00:00:00 结束时间 2024-01-31 23:59:59"
+./scripts/run.bat "历史作业 最近7天"
+./scripts/run.bat "查询最近三天的历史作业"                    # 中文数字支持
+./scripts/run.bat "查询从2026-04-01到2026-04-03的历史作业"   # 简写日期范围
+./scripts/run.bat "查询历史作业，每页5条，显示第二页"         # 中文页码
+./scripts/run.bat "查询历史作业，状态为失败"                  # 中文状态筛选
+./scripts/run.bat "查询历史作业，队列为comp，每页10条"
 
-| 关键词 | 识别为 |
-|--------|--------|
-| 昆山、华东一区 | 华东一区【昆山】 |
-| 哈尔滨、东北、东北一区 | 东北一区【哈尔滨】 |
-| 乌镇、华东三区 | 华东三区【乌镇】 |
-| 西安、西北、西北一区 | 西北一区【西安】 |
-| 雄衡、华北、华北一区 | 华北一区【雄衡】 |
-| 山东、华东四区 | 华东四区【山东】 |
-| 四川、西南、西南一区 | 西南一区【四川】 |
-| 核心、核心节点、分区一 | 核心节点【分区一】 |
-| 分区二 | 核心节点【分区二】 |
+# 作业管理 - 实时作业查询（高级用法）
+./scripts/run.bat "查询作业 开始时间 2024-01-01 00:00:00 结束时间 2024-01-31 23:59:59"
+./scripts/run.bat "查询最近3天的作业"
+./scripts/run.bat "查询运行中的作业，每页5条"
+./scripts/run.bat "查询作业，状态为排队，显示第2页"
 
-### 意图识别
+# 提交作业
+./scripts/run.bat "提交作业 sleep 900" # 简单命令
+./scripts/run.bat "在昆山提交作业 sleep 900 队列：comp 运行时间：00:30:00" # 指定区域，队列和运行时间
 
-| 意图 | 关键词 | 说明 |
-|------|--------|------|
-| 查询账户 | 余额、账户、account、balance、多少钱、欠费、**我的账户、我的余额** | 支持"我的账户余额是多少"等句式 |
-| **查询作业详情** | **8位数字作业号** | 自动识别作业号24254669、job_id 24254669等格式 |
-| 查询实时作业 | 查询作业、查看作业、作业状态、**我有哪些作业、我的作业** | 支持"我的作业有哪些"等句式 |
-| 提交作业 | 提交作业、submit、**投递作业、创建作业、新建作业、作业提交** | 支持"投递作业"等学术用语 |
-| 查询作业 | 查询作业、查看作业、作业状态、作业列表 |
-| 提交作业 | 提交作业、submit、提交任务、运行作业 |
-| 删除作业 | 删除作业、cancel、terminate、停止作业 |
-| 列出文件 | 列出、显示、查看、ls、list、目录 |
-| 创建目录 | 创建文件夹、创建目录、mkdir |
-| 上传文件 | 上传、upload、发送文件 |
-| 下载文件 | 下载、download、拉取 |
-| **创建Notebook** | **创建notebook、新建notebook、创建实例** |
-| **Notebook开机** | **notebook开机、启动notebook、开启notebook** |
-| **Notebook关机** | **notebook关机、停止notebook、关闭notebook** |
-| **释放Notebook** | **释放notebook、删除notebook、销毁notebook** |
-| **查询Notebook列表** | **notebook列表、查询notebook、我的notebook** |
-| **创建容器** | **创建容器、新建容器、create container** |
-| **启动容器** | **启动容器、开启容器、start container** |
-| **停止容器** | **停止容器、关闭容器、stop container** |
-| **删除容器** | **删除容器、移除容器、delete container** |
-| **查询容器列表** | **容器列表、查询容器、我的容器** |
-| **执行脚本** | **执行脚本、运行脚本、execute script** |
+#提交作业帮助
+./scripts/run.bat "如何提交作业"
+./scripts/run.bat "提交作业帮助"
+./scripts/run.bat "作业有哪些参数"
 
-## 作业提交配置参数
+# 删除作业
+./scripts/run.bat "删除作业 12345"
 
-| 参数 | 说明 | 默认值 |
-|------|------|--------|
-| job_name | 作业名称 | 必填 |
-| cmd | 运行命令 | 必填 |
-| nnodes | 节点数 | 1 |
-| ppn | 每节点核数 | 1 |
-| queue | 队列名称 | 必填 |
-| wall_time | 最大运行时长 | 01:00:00 |
-| work_dir | 工作目录 | ~/claw_workspace |
-| nproc | 总核心数 | 1 |
-| ngpu | GPU卡数 | - |
-| ndcu | DCU卡数 | - |
-| stdout | 标准输出文件 | {work_dir}/std.out.%j |
-| stderr | 错误输出文件 | {work_dir}/std.err.%j |
+# 作业管理 - 队列和集群
+./scripts/run.bat "查询队列"
+./scripts/run.bat "集群信息"
 
-## 作业状态说明
+# 文件管理 - 列表和上传下载
+./scripts/run.bat "文件列表"
+./scripts/run.bat "查看文件 /public/home/user"
+./scripts/run.bat "上传文件 ./data 到 /public/home/user/"
+./scripts/run.bat "下载文件 /public/home/user/data 到 ./"
 
-| 状态码 | 含义 |
-|--------|------|
-| statR | 🟢 运行中 |
-| statQ | ⏳ 排队中 |
-| statH | ⏸️ 保留 |
-| statS | ⏸️ 挂起 |
-| statE | ❌ 退出 |
-| statC | ✅ 完成 |
-| statW | ⏳ 等待 |
-| statX | ⚠️ 其他 |
-| statT | 🛑 终止 |
-| statDE | 🗑️ 删除 |
+# 文件管理 - 创建和删除
+./scripts/run.bat "创建目录 /public/home/user/workspace"
+./scripts/run.bat "创建文件 /public/home/user/data"
+./scripts/run.bat "删除文件 /public/home/user/data"
 
-## Notebook状态说明
+# 文件管理 - 复制移动和重命名
+./scripts/run.bat "复制文件 /src/data 到 /dst/"
+./scripts/run.bat "移动文件 /src/data 到 /dst/"
+./scripts/run.bat "重命名 /old/data 为 data1"
+./scripts/run.bat "检查文件 /public/home/user/file"
 
-| 状态 | 含义 |
-|------|------|
-| Creating | 创建中 |
-| Restarting | 开机中 |
-| Running | 运行中 |
-| Terminated | 已关机 |
-| Failed | 失败 |
-| Shutting | 关机中 |
+# 账户信息
+./scripts/run.bat "查询余额"
+./scripts/run.bat "查询用户"
+./scripts/run.bat "作业统计"
+./scripts/run.bat "机时"
 
-## 容器状态说明
+# 区域切换
+./scripts/run.bat "切换到山东"
+./scripts/run.bat "切换到西安"
 
-| 状态 | 含义 |
-|------|------|
-| Running | 运行中 |
-| Deploying | 部署中 |
-| Waiting | 等待中 |
-| Terminated | 已终止 |
-| Failed | 失败 |
-| Completed | 已完成 |
+# 缓存管理
+./scripts/run.bat "刷新缓存"
 
-## API 说明
+# 帮助
+./scripts/run.bat "帮助"
+```
 
-### 作业管理接口
+## Output Format
 
-- **查询集群信息**: `GET {hpcUrl}/hpc/openapi/v2/cluster`
-- **查询用户可访问队列**: `GET {hpcUrl}/hpc/openapi/v2/queuenames/users/{username}`
-- **提交作业**: `POST {hpcUrl}/hpc/openapi/v2/apptemplates/BASIC/BASE/job`
-- **删除作业**: `DELETE {hpcUrl}/hpc/openapi/v2/jobs`
-- **查询作业详情**: `GET {hpcUrl}/hpc/openapi/v2/jobs/{job_id}`
-- **查询实时作业**: `GET {hpcUrl}/hpc/openapi/v2/jobs`
-- **查询历史作业**: `GET {hpcUrl}/hpc/openapi/v2/historyjobs`
+- 作业查询结果按区域分组显示
+- 账户信息以表格形式展示
+- 文件操作结果简洁明了
+- 错误信息包含具体原因
+- 根据用户当前操作给出3个下一步操作的预测问题
 
-### 文件管理接口
+## 配置说明
 
-- **查询文件列表**: `GET {efileUrl}/openapi/v2/file/list`
-- **创建文件夹**: `POST {efileUrl}/openapi/v2/file/mkdir`
-- **创建文件**: `POST {efileUrl}/openapi/v2/file/touch`
-- **上传文件**: `POST {efileUrl}/openapi/v2/file/upload`
-- **下载文件**: `GET {efileUrl}/openapi/v2/file/download`
-- **删除文件**: `POST {efileUrl}/openapi/v2/file/remove`
-- **检查文件存在**: `POST {efileUrl}/openapi/v2/file/exist`
+首次使用需要在 `~/.scnet-chat.env` 配置：
 
-### Notebook管理接口
+```bash
+SCNET_ACCESS_KEY=your_access_key
+SCNET_SECRET_KEY=your_secret_key
+SCNET_USER=your_username
+```
 
-- **创建Notebook**: `POST {aiUrl}/ac/openapi/v2/notebook/actions/create`
-- **Notebook开机**: `POST {aiUrl}/ac/openapi/v2/notebook/actions/start`
-- **Notebook关机**: `POST {aiUrl}/ai/openapi/v2/notebook/actions/stop`
-- **Notebook释放**: `POST {aiUrl}/ai/openapi/v2/notebook/actions/release`
-- **查询Notebook列表**: `GET {aiUrl}/ai/openapi/v2/notebook/list`
-- **查询Notebook详情**: `GET {aiUrl}/ai/openapi/v2/notebook/detail`
-- **查询Jupyter URL**: `GET {aiUrl}/ai/openapi/v2/notebook/url`
-- **查询镜像列表**: `POST {aiUrl}/ai/openapi/v2/image/images`
-- **查询模型镜像**: `POST {aiUrl}/ai/openapi/v2/image/models`
+获取凭证：https://www.scnet.cn/ui/console/index.html#/personal/auth-manage
 
-### 容器管理接口
+## 依赖安装
 
-- **创建容器**: `POST {aiUrl}/ai/openapi/v2/instance-service/task`
-- **启动容器**: `POST {aiUrl}/ai/openapi/v2/instance-service/task/actions/restart`
-- **停止容器**: `POST {aiUrl}/ai/openapi/v2/instance-service/task/actions/stop`
-- **删除容器**: `DELETE {aiUrl}/ai/openapi/v2/instance-service/task`
-- **执行脚本**: `POST {aiUrl}/ai/openapi/v2/instance-service/task/actions/execute-script`
-- **查询容器列表**: `GET {aiUrl}/ai/openapi/v2/instance-service/task`
-- **查询容器详情**: `GET {aiUrl}/ai/openapi/v2/instance-service/{id}/detail`
-- **获取容器URL**: `GET {aiUrl}/ai/openapi/v2/instance-service/{id}/url`
-- **更新资源规格**: `POST {aiUrl}/ai/openapi/v2/instance-service/resource-spec/actions/update`
-- **查询资源限额**: `GET {aiUrl}/ai/openapi/v2/instance-service/resources`
-- **查询资源分组**: `GET {aiUrl}/ai/openapi/v2/instance-service/resource-group`
-- **查询挂载路径**: `GET {aiUrl}/ai/openapi/v2/instance-service/allowed-mount-dir`
-
-## 文件说明
-
-- `scripts/scnet_chat.py` - 主程序，包含账户、作业、文件、Notebook、容器管理全部功能
-- `scripts/scnet_file.py` - 文件管理模块（独立版本）
-- `scripts/scnet_notebook.py` - Notebook管理模块（独立版本）
-- `scripts/scnet_container.py` - 容器管理模块（独立版本）
-- `scripts/config_manager.py` - 配置管理模块（支持环境变量和配置文件）
-
-## 注意事项
-
-1. 配置文件 `~/.scnet-chat.env` 建议使用 `chmod 600` 设置权限，防止他人读取
-2. 确保网络可以访问各计算中心的API地址
-3. AK/SK需要妥善保管，不要泄露
-4. token有过期时间，过期后需要重新获取
-5. 作业提交前需要确认队列有可用资源
-6. 文件操作接口使用efileUrls，作业操作接口使用hpcUrls
-7. Notebook和容器操作接口使用aiUrls
-8. 账户余额单位为"元"
+```bash
+pip install aiohttp
+```

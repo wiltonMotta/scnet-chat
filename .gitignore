@@ -1,28 +1,10 @@
-# macOS
 .DS_Store
-
-# Logs
-logs/
-*.log
-
-# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
 .Python
-*.so
-
-# Virtual environments
+.venv/
 venv/
-ENV/
-env/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Dependencies
-node_modules/
+.env
+*.egg-info/
+.pytest_cache/
