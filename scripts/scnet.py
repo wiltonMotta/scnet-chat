@@ -84,7 +84,7 @@ class IntentRecognizer:
         'statH': ['保留', 'hold', '挂起保留'],
         'statS': ['挂起', 'suspend', '暂停', 'suspended'],
         'statE': ['退出', 'exit', 'exited', '已退出'],
-        'statC': ['完成', 'completed', 'complete', '结束', '已完成', '成功'],
+        'statC': ['完成', 'completed', 'complete', '已完成', '成功'],
         'statW': ['等待', 'wait', 'waiting'],
         'statX': ['其他', 'other'],
         'statDE': ['取消', 'cancelled', '已取消', 'deleted'],
