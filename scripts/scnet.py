@@ -84,7 +84,7 @@ class IntentRecognizer:
         'statH': ['保留', 'hold', '挂起保留'],
         'statS': ['挂起', 'suspend', '暂停', 'suspended'],
         'statE': ['退出', 'exit', 'exited', '已退出'],
-        'statC': ['完成', 'completed', 'complete', '结束', '已完成', '成功'],
+        'statC': ['完成', 'completed', 'complete', '已完成', '成功'],
         'statW': ['等待', 'wait', 'waiting'],
         'statX': ['其他', 'other'],
         'statDE': ['取消', 'cancelled', '已取消', 'deleted'],
@@ -253,20 +253,25 @@ class IntentRecognizer:
             params.update(self._extract_job_filter_params(text))
             params["job_id"] = self._extract_job_id(text)
             return "job_history", params
-            
+
         # 作业详情
         if any(k in text_lower for k in ["作业详情", "查看作业", "job detail"]):
             params["job_id"] = self._extract_job_id(text)
             if params["job_id"]:
                 return "job_detail", params
-            
-        # 实时作业查询（放在文件管理之后，避免路径中的"job"被误识别）
+
+        # 明确的实时作业查询（用户明确提到"实时"、"运行中"等词）
+        if any(k in text_lower for k in ["实时作业", "实时任务", "运行作业", "运行中", "running job", "running jobs", "active job", "active jobs", "当前作业"]):
+            params.update(self._extract_job_filter_params(text))
+            return "job_list", params
+
+        # 通用作业查询（未明确指定历史或实时，同时查询两者）
         # 使用更严格的匹配：必须是完整的词，且不是文件路径的一部分
         job_keywords = ["作业", "任务", "jobs"]
         if any(k in text_lower for k in job_keywords) or \
            (" job " in text_lower or text_lower.startswith("job ") or text_lower.endswith(" job")):
             params.update(self._extract_job_filter_params(text))
-            return "job_list", params
+            return "job_query", params
             
         # ========== 帮助 ==========
         if any(k in text_lower for k in ["帮助", "help", "怎么用", "使用说明"]):
@@ -1028,6 +1033,39 @@ def handle_job_history(params: Dict[str, Any]) -> str:
     return run_subprocess(cmd, timeout=TIMEOUT_NORMAL)
 
 
+def handle_job_query(params: Dict[str, Any]) -> str:
+    """处理通用作业查询 - 同时查询实时作业和历史作业"""
+    import concurrent.futures
+
+    results = {}
+
+    def query_realtime():
+        return handle_job_list(params.copy())
+
+    def query_history():
+        return handle_job_history(params.copy())
+
+    # 并发查询实时作业和历史作业
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        future_realtime = executor.submit(query_realtime)
+        future_history = executor.submit(query_history)
+
+        results['realtime'] = future_realtime.result(timeout=TIMEOUT_NORMAL)
+        results['history'] = future_history.result(timeout=TIMEOUT_NORMAL)
+
+    # 合并输出
+    output_parts = []
+    output_parts.append("\n" + "=" * 70)
+    output_parts.append("  📊 同时查询实时作业和历史作业")
+    output_parts.append("=" * 70)
+    output_parts.append("\n▶ 实时作业")
+    output_parts.append(results['realtime'])
+    output_parts.append("\n▶ 历史作业")
+    output_parts.append(results['history'])
+
+    return "\n".join(output_parts)
+
+
 def handle_job_detail(params: Dict[str, Any]) -> str:
     """处理作业详情查询"""
     job_id = params.get("job_id")
@@ -1502,6 +1540,7 @@ def main():
         "walltime": handle_walltime,
         "job_list": handle_job_list,
         "job_history": handle_job_history,
+        "job_query": handle_job_query,
         "job_detail": handle_job_detail,
         "job_submit": handle_job_submit,
         "job_submit_help": lambda p: handle_job_submit_help(),
@@ -1523,7 +1562,7 @@ def main():
     
     # 对于需要缓存的命令，先检查配置和缓存
     intents_requiring_cache = [
-        "user_info", "job_list", "job_history", "job_detail", 
+        "user_info", "job_list", "job_history", "job_query", "job_detail",
         "job_submit", "job_delete", "job_queues", "cluster_info",
         "file_list", "file_upload", "file_download", "file_mkdir",
         "file_touch", "file_delete", "file_rename", "file_copy", "file_move"
