@@ -212,10 +212,6 @@ class IntentRecognizer:
            ("查询用户" in text_lower and "作业" not in text_lower):
             return "user_info", params
         
-        # 查询作业统计信息
-        if any(k in text_lower for k in ["作业统计", "统计信息", "作业状态统计", "job stats", "job statistics"]):
-            return "job_stats", params
-        
         # 查询机时
         if any(k in text_lower for k in ["机时", "剩余机时", "已用机时", "walltime", "机时信息"]):
             return "walltime", params
@@ -951,9 +947,6 @@ def handle_user_info() -> str:
     return run_subprocess([sys.executable, str(SCRIPTS_DIR / "user.py")], timeout=TIMEOUT_QUICK)
 
 
-def handle_job_stats(params: Dict[str, Any]) -> str:
-    """处理作业统计信息查询"""
-    return run_subprocess([sys.executable, str(SCRIPTS_DIR / "user.py"), "--stats"], timeout=TIMEOUT_NORMAL)
 
 
 def handle_walltime(params: Dict[str, Any]) -> str:
@@ -1454,7 +1447,7 @@ def format_help() -> str:
 
 {Colors.BOLD}3. 用户信息查询{Colors.END}
    - 查询用户 / 账户信息 / 我的信息
-   - 作业统计 / 统计信息 - 查询实时作业统计
+   - 作业统计 / 统计作业 - 同时查询实时作业和历史作业
    - 机时 / 剩余机时 / 已用机时 - 查询机时使用情况
 
 {Colors.BOLD}4. 作业管理{Colors.END}
@@ -1536,7 +1529,6 @@ def main():
         "cache_refresh": handle_cache_refresh,
         "switch_cluster": lambda p: handle_switch_cluster(p.get("cluster_name", "")),
         "user_info": lambda p: handle_user_info(),
-        "job_stats": handle_job_stats,
         "walltime": handle_walltime,
         "job_list": handle_job_list,
         "job_history": handle_job_history,
